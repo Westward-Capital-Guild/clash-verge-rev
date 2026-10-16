@@ -294,6 +294,7 @@ impl<E: RunStateEnv> RunStateStore<E> {
     }
 
     /// Revokes a failed Sidecar allowance without changing Service health.
+    #[cfg(test)]
     pub fn withdraw_sidecar_allowance(&self) -> bool {
         let mut state = self.service.lock();
         if !state.service.sidecar_allowed {
@@ -307,6 +308,7 @@ impl<E: RunStateEnv> RunStateStore<E> {
     }
 
     /// Accepts Sidecar only while the Service is unusable and no conflicting operation is active.
+    #[cfg(test)]
     pub fn allow_sidecar_for_session(&self) -> Result<()> {
         let mut state = self.service.lock();
         if self.operation_running.load(Ordering::Acquire) {

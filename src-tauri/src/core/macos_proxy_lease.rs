@@ -186,6 +186,7 @@ impl ProxyLease {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "Tests assert by panicking")]
 mod tests {
     use super::*;
 

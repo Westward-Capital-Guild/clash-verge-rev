@@ -273,7 +273,7 @@ previous selection where rollback is possible. Status reports system-proxy
 activation separately from unverified target reachability. macOS retains the
 pre-takeover proxy dictionaries in memory and restores only services whose settings
 still exactly match this process's applied state. A refused restoration is reported;
-cleanup attempts to avoid leaving an owned proxy pointing at a stopped core.
+controlled shutdown retains the core and ownership for a restoration retry.
 
 The supported Desktop route is Settings → Connections, add/enable the concrete
 SSH alias, then select the remote folder. There is no verified public automatic

@@ -1878,6 +1878,7 @@ impl ServiceManager {
         }
     }
 
+    #[cfg(test)]
     pub async fn confirm_ready(&self) -> Result<()> {
         require_privileged_service()?;
         RUN_STATE.probe().await.map(|_| ())

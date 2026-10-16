@@ -121,7 +121,7 @@ pub use fake::FakeEnv;
 
 #[cfg(test)]
 mod workspace_tests {
-    use super::{RealEnv, RunStateEnv};
+    use super::{RealEnv, RunStateEnv as _};
 
     #[tokio::test]
     async fn workspace_never_probes_the_upstream_service_or_installation() {

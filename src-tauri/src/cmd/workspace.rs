@@ -547,6 +547,7 @@ pub(crate) async fn cancel_workspace_companions() {
 }
 
 #[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used, reason = "Tests assert by panicking")]
 mod tests {
     use super::CompanionGroup;
     use std::process::Stdio;

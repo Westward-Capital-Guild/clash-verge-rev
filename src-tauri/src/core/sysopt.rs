@@ -606,27 +606,19 @@ impl Sysopt {
     async fn restore_proxy_lease(&self) -> Option<Result<()>> {
         let lease = self.proxy_lease.lock().take()?;
         self.stop_proxy_guard().await;
-        let result = tokio::task::spawn_blocking(move || lease.restore())
+        let restoration = lease.clone();
+        let result = tokio::task::spawn_blocking(move || restoration.restore())
             .await
             .map_err(anyhow::Error::from)
             .and_then(|result| result);
-        let previous = self.inner_proxy.read().clone();
-        {
-            let (sys, auto) = &mut *self.inner_proxy.write();
-            sys.enable = false;
-            auto.enable = false;
-        }
         if result.is_err() {
-            // A refused restoration must not strand an owned proxy when the core exits.
-            if let Ok(current) = Sysproxy::snapshot()
-                && proxy_ownership_action(&current, &previous, false) == ProxyOwnershipAction::Apply
-            {
-                let mut off = previous;
-                off.0.enable = false;
-                off.1.enable = false;
-                let _ = disable_all_proxies(off.0, off.1).await;
-            }
+            // Keep ownership for retry; controlled shutdown leaves the core running on failure.
+            *self.proxy_lease.lock() = Some(lease);
+            return Some(result);
         }
+        let (sys, auto) = &mut *self.inner_proxy.write();
+        sys.enable = false;
+        auto.enable = false;
         Some(result)
     }
 
