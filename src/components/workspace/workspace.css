@@ -1,0 +1,211 @@
+.workspace-shell {
+  padding: 36px;
+  min-height: 100%;
+  height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
+  color: #121815;
+  background: #f5f0e9;
+  font:
+    16px / 1.75 Manrope,
+    "Noto Sans SC",
+    "PingFang SC",
+    "Microsoft YaHei",
+    sans-serif;
+  letter-spacing: 0;
+}
+.workspace-shell * {
+  box-sizing: border-box;
+}
+.workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #d9ded5;
+}
+.workspace-eyebrow,
+.workspace-index {
+  font-size: 12px;
+  color: #516458;
+  margin: 0 0 12px;
+}
+.workspace-shell h1 {
+  font-size: 32px;
+  line-height: 1.25;
+  color: #0b4f43;
+  margin: 0;
+  font-weight: 650;
+}
+.workspace-shell h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+  font-weight: 600;
+}
+.workspace-intro {
+  margin: 12px 0 0;
+}
+.workspace-shell button {
+  border: 1px solid #718479;
+  background: transparent;
+  color: #0b4f43;
+  padding: 10px 16px;
+  min-height: 44px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.workspace-shell button:hover:not(:disabled) {
+  background: #e4eadf;
+}
+.workspace-shell button:focus-visible {
+  outline: 3px solid #3156d3;
+  outline-offset: 3px;
+}
+.workspace-shell button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.workspace-shell .workspace-primary {
+  background: #0b4f43;
+  color: #fffdf8;
+}
+.workspace-shell .workspace-primary:hover:not(:disabled) {
+  background: #116a53;
+}
+.workspace-identity {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  padding: 28px 0;
+}
+.workspace-avatar {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  background: #b9dfc7;
+  color: #0b4f43;
+  flex-shrink: 0;
+}
+.workspace-identity-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workspace-identity-text p {
+  margin: 0;
+  font-size: 14px;
+  color: #516458;
+}
+.workspace-services {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 20px;
+  margin-top: 24px;
+}
+.workspace-service {
+  background: #fffdf8;
+  border: 1px solid #d9ded5;
+  border-radius: 8px;
+  padding: 24px;
+}
+.workspace-service p {
+  margin: 16px 0;
+}
+.workspace-status {
+  color: #3156d3;
+  font-size: 14px;
+}
+.workspace-message {
+  margin: 20px 0;
+  padding: 16px;
+  border-left: 3px solid #3156d3;
+  background: #fffdf8;
+  font-size: 14px;
+}
+.workspace-error {
+  border-color: #d04a45;
+}
+.workspace-command {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.workspace-command code {
+  font-size: 14px;
+}
+.workspace-footer {
+  margin-top: 36px;
+  padding-top: 20px;
+  border-top: 1px solid #d9ded5;
+  font-size: 12px;
+  color: #516458;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+}
+.workspace-navigation {
+  background: #fffdf8;
+  padding: 28px 16px;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.workspace-navigation a {
+  padding: 12px 14px;
+  border-radius: 6px;
+  color: #0b4f43;
+  text-decoration: none;
+  font-size: 14px;
+  min-height: 44px;
+}
+.workspace-navigation a.active {
+  background: #e4eadf;
+  font-weight: 600;
+}
+.workspace-navigation .workspace-brand {
+  font-size: 18px;
+  margin: 0 0 24px;
+}
+.workspace-navigation a:focus-visible {
+  outline: 3px solid #3156d3;
+  outline-offset: 2px;
+}
+@media (max-width: 700px) {
+  .workspace-shell {
+    padding: 20px;
+  }
+  .workspace-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .workspace-identity {
+    flex-wrap: wrap;
+  }
+  .workspace-login-options {
+    flex-basis: 100%;
+  }
+  .workspace-navigation {
+    min-width: 140px;
+    padding: 20px 8px;
+  }
+}
+
+.workspace-login-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workspace-shell > .workspace-service {
+  margin-top: 24px;
+}
+.workspace-remote-host {
+  margin-top: 20px;
+  border-top: 1px solid #d9ded5;
+}

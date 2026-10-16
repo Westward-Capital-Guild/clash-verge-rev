@@ -16,6 +16,7 @@ import type {
   ProfilePatch,
   ProfileCreate,
 } from './bindings'
+import type { WorkspaceAction, WorkspaceStatus } from './bindings'
 
 export type {
   RunningMode,
@@ -511,4 +512,18 @@ export async function checkMediaUnlock(onComplete: Channel<UnlockItem>) {
 
 export async function checkMediaUnlockItem(name: string) {
   return commands.checkMediaUnlockItem(name)
+}
+
+export function workspaceAction(
+  action: WorkspaceAction,
+): Promise<WorkspaceStatus> {
+  return commands.workspaceAction(action)
+}
+
+export function workspaceRemote(
+  action: import('./workspace-contract').WorkspaceRemoteAction,
+  hostId?: string,
+  workspaceId?: string,
+): Promise<import('./workspace-contract').WorkspaceRemoteStatus> {
+  return commands.workspaceRemote(action, hostId ?? null, workspaceId ?? null)
 }

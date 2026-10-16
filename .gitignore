@@ -17,3 +17,10 @@ target
 .vfox
 .claude
 .zed
+
+# Private deployment and local companion state
+.workspace-private/
+companion/.venv/
+companion/*.egg-info/
+**/__pycache__/
+**/.pytest_cache/

@@ -43,6 +43,12 @@ static PENDING_SERVICE_FALLBACK_NOTICE: Mutex<Option<String>> = Mutex::new(None)
 static PENDING_SERVICE_REPAIR_NOTICE: AtomicBool = AtomicBool::new(false);
 static PENDING_SERVICE_OWNER_NOTICE: Mutex<Option<String>> = Mutex::new(None);
 
+pub(crate) fn require_privileged_service() -> Result<()> {
+    bail!(
+        "Pilgrim Workspace only supports Sidecar mode; managing or using the Clash Verge privileged service is disabled"
+    )
+}
+
 /// Why the Service was unavailable when the core fell back to Sidecar.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, specta::Type)]
 #[serde(tag = "kind", content = "reason", rename_all = "camelCase")]
@@ -110,6 +116,7 @@ fn generate_service_session_token() -> Result<String> {
 }
 
 pub(crate) fn active_service_session() -> Result<OwnerSessionProof> {
+    require_privileged_service()?;
     ACTIVE_SERVICE_SESSION
         .lock()
         .as_ref()
@@ -781,6 +788,7 @@ fn force_reinstall_service() -> Result<()> {
 /// command line, which no other local account can alter, so a file swapped on disk after this
 /// hash was computed is refused by the installer instead of published.
 pub fn stage_approved_core(core_path: &Path) -> Result<()> {
+    require_privileged_service()?;
     tokio::task::block_in_place(|| {
         invoke_service_install(
             &[clash_verge_service_ipc::management::CoreSource {
@@ -798,6 +806,7 @@ pub fn stage_approved_core(core_path: &Path) -> Result<()> {
 
 /// Dispatches a privileged platform operation on a blocking thread.
 pub(crate) fn run_privileged_service_action(action: PendingAction) -> Result<()> {
+    require_privileged_service()?;
     let (operation, label): (fn() -> Result<()>, &'static str) = match action {
         PendingAction::Install => (install_service, "install service"),
         PendingAction::Uninstall => (uninstall_service, "uninstall service"),
@@ -894,6 +903,7 @@ pub(super) fn record_residual_service(error: &anyhow::Error) {
 /// 尝试使用服务启动core
 #[tracing::instrument(skip_all, level = "info", fields(generation = tracing::field::Empty, staging = tracing::field::Empty, code = tracing::field::Empty, outcome = tracing::field::Empty))]
 pub(super) async fn start_with_existing_service(config_file: &Path) -> Result<()> {
+    require_privileged_service()?;
     clear_active_service_session();
 
     let credentials = current_owner_credentials()?;
@@ -1472,6 +1482,7 @@ async fn discard_fetched(fetched: Vec<FetchedCache>) {
 /// 通过服务停止core
 #[tracing::instrument(skip_all, level = "info", fields(code = tracing::field::Empty, outcome = tracing::field::Empty))]
 pub(super) async fn stop_core_by_service() -> Result<()> {
+    require_privileged_service()?;
     cancel_owner_monitors();
 
     let credentials = match current_owner_credentials() {
@@ -1553,6 +1564,7 @@ pub(super) async fn set_system_proxy_by_service_with_session(
     proxy: &MacosProxyConfig,
     session: &OwnerSessionProof,
 ) -> Result<ProxyApplyOutcome> {
+    require_privileged_service()?;
     let credentials = current_owner_credentials()?;
     let response = clash_verge_service_ipc::set_system_proxy(&credentials, session, proxy)
         .await
@@ -1866,32 +1878,46 @@ impl ServiceManager {
         }
     }
 
+    #[cfg(test)]
     pub async fn confirm_ready(&self) -> Result<()> {
+        require_privileged_service()?;
         RUN_STATE.probe().await.map(|_| ())
     }
 
+    #[expect(
+        clippy::unused_async,
+        reason = "Preserve the upstream service interface for sidecar-only builds"
+    )]
     pub async fn current(&self) -> ServiceStatus {
-        ServiceStatus::from_run_state(&RUN_STATE.settled().await)
+        RUN_STATE.accept_sidecar();
+        ServiceStatus::from_run_state(&RUN_STATE.state())
     }
 
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "Preserve the fallible upstream service interface"
+    )]
     pub fn allow_sidecar_for_session(&self) -> Result<()> {
-        RUN_STATE.allow_sidecar_for_session()
+        RUN_STATE.accept_sidecar();
+        Ok(())
     }
 
     pub fn require_install_for_session(&self) -> Result<()> {
+        require_privileged_service()?;
         RUN_STATE.require_install_for_session()
     }
 
-    pub(crate) fn withdraw_sidecar_allowance(&self) -> bool {
-        RUN_STATE.withdraw_sidecar_allowance()
+    pub(crate) const fn withdraw_sidecar_allowance(&self) -> bool {
+        false
     }
 
+    #[expect(
+        clippy::unused_async,
+        reason = "Preserve the upstream service interface for sidecar-only builds"
+    )]
     pub async fn detect_startup_status(&self) {
-        if cfg!(feature = "dev-sidecar") {
-            RUN_STATE.accept_sidecar();
-            return;
-        }
-        RUN_STATE.observe_current_health().await;
+        RUN_STATE.observe(ServiceHealth::NotInstalled);
+        RUN_STATE.accept_sidecar();
     }
 
     fn set_status(&self, status: ServiceStatus) {
@@ -1912,11 +1938,17 @@ impl ServiceManager {
         .await
     }
 
+    #[expect(
+        clippy::unused_async,
+        reason = "Preserve the upstream service interface for sidecar-only builds"
+    )]
     pub async fn refresh(&self) -> Result<()> {
-        self.run_operation(async { self.confirm_ready().await }).await
+        RUN_STATE.accept_sidecar();
+        Ok(())
     }
 
     pub async fn handle_service_status(&self, status: ServiceStatus) -> Result<()> {
+        require_privileged_service()?;
         // Box the large operation future once instead of carrying it in every calling command.
         self.run_operation(Box::pin(self.apply_service_status(status))).await
     }
@@ -2070,6 +2102,25 @@ mod tests {
         path::{Path, PathBuf},
         sync::atomic::{AtomicU64, Ordering},
     };
+
+    #[tokio::test]
+    async fn workspace_rejects_service_actions_and_sessions_without_machine_access() {
+        for action in [
+            PendingAction::Install,
+            PendingAction::Uninstall,
+            PendingAction::Reinstall,
+            PendingAction::ForceReinstall,
+        ] {
+            assert!(super::run_privileged_service_action(action).is_err());
+        }
+        let missing = Path::new("/workspace-service-must-not-be-accessed");
+        assert!(super::stage_approved_core(missing).is_err());
+        assert!(super::start_with_existing_service(missing).await.is_err());
+        assert!(super::stop_core_by_service().await.is_err());
+        assert!(super::active_service_session().is_err());
+        assert!(super::SERVICE_MANAGER.confirm_ready().await.is_err());
+        assert!(super::SERVICE_MANAGER.require_install_for_session().is_err());
+    }
 
     /// A Run State backed by a scripted environment, so these tests never touch the global.
     fn fake_store() -> RunStateStore<FakeEnv> {

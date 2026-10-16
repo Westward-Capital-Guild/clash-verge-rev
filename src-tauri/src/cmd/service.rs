@@ -4,7 +4,7 @@ use crate::{
     core::{
         CoreManager,
         manager::RunningMode,
-        service::{SERVICE_MANAGER, ServiceStatus, request_runtime_provider_sync},
+        service::{SERVICE_MANAGER, ServiceStatus, request_runtime_provider_sync, require_privileged_service},
     },
 };
 
@@ -19,6 +19,7 @@ pub enum ServiceInstallOutcome {
 }
 
 async fn execute_service_operation_sync(status: ServiceStatus, error_code: &str) -> CmdResult<ServiceInstallOutcome> {
+    require_privileged_service().map_err(|error| proxy_aware_coded_error(&error, "WORKSPACE_SERVICE_DISABLED"))?;
     let manager = CoreManager::global();
     let result = {
         let _lifecycle = manager.lifecycle_lock.lock().await;
@@ -90,6 +91,7 @@ pub async fn install_service() -> CmdResult<ServiceInstallOutcome> {
 #[tauri::command]
 #[specta::specta]
 pub async fn uninstall_service() -> CmdResult {
+    require_privileged_service().map_err(|error| proxy_aware_coded_error(&error, "WORKSPACE_SERVICE_DISABLED"))?;
     CoreManager::global()
         .uninstall_service_and_start_sidecar()
         .await
@@ -163,6 +165,20 @@ mod tests {
         CoreAvailability, CoreInspection, InstallationStatus, ProtocolInfo, management::InstallationVerificationError,
     };
     use std::cell::Cell;
+
+    #[tokio::test]
+    async fn workspace_rejects_service_management_before_accessing_the_core() {
+        for result in [
+            super::install_service().await.map(|_| ()),
+            super::uninstall_service().await,
+            super::reinstall_service().await.map(|_| ()),
+            super::repair_service().await.map(|_| ()),
+        ] {
+            let error = result.expect_err("Workspace cannot manage the upstream service");
+            assert_eq!(error.code.as_deref(), Some("WORKSPACE_SERVICE_DISABLED"));
+            assert!(error.detail.contains("Sidecar"));
+        }
+    }
 
     #[tokio::test]
     async fn rejected_installation_reports_sidecar_only_after_successful_continuation() {

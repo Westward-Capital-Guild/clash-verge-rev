@@ -4,6 +4,18 @@ import { invoke as __TAURI_INVOKE, Channel } from '@tauri-apps/api/core'
 
 /** Commands */
 export const commands = {
+  workspaceAction: (action: WorkspaceAction) =>
+    __TAURI_INVOKE<WorkspaceStatus>('workspace_action', { action }),
+  workspaceRemote: (
+    action: WorkspaceRemoteAction,
+    hostId: string | null,
+    workspaceId: string | null,
+  ) =>
+    __TAURI_INVOKE<WorkspaceRemoteStatus>('workspace_remote', {
+      action,
+      hostId,
+      workspaceId,
+    }),
   getSystemInfo: () => __TAURI_INVOKE<SystemInfo>('get_system_info'),
   /**  获取应用的运行时间（毫秒） */
   getAppUptime: () => __TAURI_INVOKE<number>('get_app_uptime'),
@@ -1051,6 +1063,90 @@ export type VergeEventPayloads = {
 export type WebDavFile = {
   href: string
   last_modified: string
+}
+
+export type WorkspaceAction =
+  | 'status'
+  | 'login'
+  | 'login_feishu'
+  | 'login_authentik'
+  | 'configure'
+  | 'connect'
+  | 'update'
+  | 'disconnect'
+  | 'logout'
+
+export type WorkspaceCapabilities = {
+  network: string
+  development_hosts: string
+  local_model: string
+}
+
+export type WorkspaceProvider = 'feishu' | 'authentik'
+
+export type WorkspaceRemoteAction = 'hosts' | 'prepare' | 'check'
+
+export type WorkspaceRemoteDirectory = {
+  id: string
+  display_name: string
+  path?: string | null
+}
+
+export type WorkspaceRemoteHost = {
+  id: string
+  display_name: string
+  network_requirement?: string | null
+  workspaces: WorkspaceRemoteDirectory[]
+}
+
+export type WorkspaceRemoteState =
+  | 'unconfigured'
+  | 'signed_out'
+  | 'available'
+  | 'unassigned'
+  | 'unavailable'
+  | 'not_authorized'
+  | 'missing_key'
+  | 'unverified_host'
+  | 'invalid_host'
+  | 'config_conflict'
+  | 'ssh_prepared'
+  | 'ssh_ready'
+  | 'unreachable'
+  | 'codex_unavailable'
+  | 'binding_changed'
+  | 'key_mismatch'
+  | 'host_key_conflict'
+  | 'permission_denied'
+  | 'desktop_config_conflict'
+  | 'network_required'
+
+export type WorkspaceRemoteStatus = {
+  code?: string | null
+  state: WorkspaceRemoteState
+  hosts: WorkspaceRemoteHost[]
+  alias: string | null
+  path: string | null
+}
+
+export type WorkspaceState =
+  | 'unconfigured'
+  | 'signed_out'
+  | 'signed_in'
+  | 'expired'
+
+export type WorkspaceStatus = {
+  state: WorkspaceState
+  name: string | null
+  codex: boolean
+  providers?: WorkspaceProvider[]
+  provider?: WorkspaceProvider | null
+  network_enabled?: boolean
+  remote_revoked?: boolean | null
+  company?: boolean
+  code?: string | null
+  capabilities?: WorkspaceCapabilities | null
+  network_stage?: string | null
 }
 
 export type YamlMapping = { [key in string]: JsonValue }

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pilgrim-workspace-agent"
+version = "0.1.0"
+description = "Per-user OIDC and development environment companion"
+requires-python = ">=3.11"
+license = "GPL-3.0-only"
+dependencies = ["Authlib>=1.6,<2", "requests>=2.32,<3", "keyring>=25,<26", "tomlkit>=0.13,<1", "filelock>=3.16,<4", "cryptography>=46,<51"]
+
+[project.optional-dependencies]
+bundle = ["pyinstaller>=6.16,<7"]
+test = ["pytest>=8,<10", "playwright>=1.50,<2", "pillow>=11,<13"]
+
+[project.scripts]
+pilgrim-workspace-agent = "workspace_agent:main"
+
+[tool.setuptools]
+py-modules = ["workspace_agent", "remote_ssh", "workspace_access"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
