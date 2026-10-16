@@ -95,7 +95,7 @@ export const WorkspaceView = ({
       )}
       {status?.state === 'unconfigured' && (
         <div className="workspace-message">
-          尚未接入企业环境。请由管理员安装伴随服务并提供本机企业配置。
+          公司接入尚未就绪。请联系管理员完成接入，无需手动填写认证或模型配置。
         </div>
       )}
 
@@ -175,16 +175,16 @@ export const WorkspaceView = ({
           )}
           <section className="workspace-service">
             <p className="workspace-index">02 / DEVELOPMENT</p>
-            <h2>AI 开发环境</h2>
+            <h2>本机模型服务</h2>
             <span className="workspace-status">
-              {status?.codex ? 'Codex 已配置' : 'Codex 待配置'}
+              {status?.codex ? '本机模型已配置' : '本机模型待配置'}
             </span>
             <p>同步公司的模型设置，凭据按需获取。保留你的其他开发配置。</p>
             <button
               disabled={pending !== null || !signedIn}
               onClick={action('configure')}
             >
-              同步 Codex 配置
+              配置本机模型
             </button>
             {status?.codex && (
               <p className="workspace-command">
@@ -203,7 +203,7 @@ export const WorkspaceView = ({
         <section className="workspace-service">
           <h2>支持与诊断</h2>
           <p>
-            企业账号和配置由管理员提供。需要排查连接问题时，可以打开高级网络设置。
+            使用工作账号登录即可接入公司服务。需要排查连接问题时，可以打开高级网络设置。
           </p>
           <button onClick={onDiagnostics} disabled={!onDiagnostics}>
             高级网络设置

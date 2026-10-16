@@ -194,3 +194,18 @@ companion, isolate privileged-service/package identifiers, provide a signed
 company update channel and validate installation/startup/logout on each supported
 OS. Do not install the upstream service or publish this smoke build as a finished
 company desktop release.
+
+## Delivery boundaries
+
+The current local JSON is developer wiring, not an employee setup requirement.
+Company distributions must obtain login metadata from a trusted bootstrap URL
+injected by the private build, and provision allowed capabilities after login.
+Each company selects its identity backend; a company using Feishu exposes only
+that provider. Bootstrap and automatic provisioning are pending integration.
+
+Codex setup has two independent capabilities: configuring the local model provider
+and adding an authorized personal development host through SSH. The current
+configure action implements only the local provider. Remote host discovery, safe
+SSH configuration and opening the remote project in Codex Desktop remain pending.
+Remote work must retain its existing provider configuration. SSH connectivity alone
+does not establish successful Desktop integration; both require separate acceptance.

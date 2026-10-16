@@ -159,8 +159,8 @@ def main():
                     page.goto(url)
                     page.get_by_role("button", name="企业 SSO 登录", exact=True).click()
                     page.get_by_role("heading", name="Smoke User").wait_for()
-                    page.get_by_role("button", name="同步 Codex 配置").click()
-                    page.get_by_text("Codex 已配置", exact=True).wait_for()
+                    page.get_by_role("button", name="配置本机模型").click()
+                    page.get_by_text("本机模型已配置", exact=True).wait_for()
                     page.screenshot(
                         path=str(screenshot_dir / "workbench-desktop.png"),
                         full_page=True,
@@ -179,7 +179,7 @@ def main():
                         "Array.from(document.querySelectorAll('button')).every(e => parseFloat(getComputedStyle(e).fontSize) >= 14 && e.getBoundingClientRect().height >= 44)"
                     )
                     provider.fail_policy = True
-                    page.get_by_role("button", name="同步 Codex 配置").click()
+                    page.get_by_role("button", name="配置本机模型").click()
                     page.get_by_role("alert").wait_for()
                     page.get_by_role("button", name="退出登录并断开").click()
                     page.get_by_role(
@@ -190,8 +190,8 @@ def main():
                     page.get_by_role("button", name="飞书登录", exact=True).click()
                     page.get_by_role("heading", name="Smoke User").wait_for()
                     assert agent.store.get()["provider"] == "feishu"
-                    page.get_by_role("button", name="同步 Codex 配置").click()
-                    page.get_by_text("Codex 已配置", exact=True).wait_for()
+                    page.get_by_role("button", name="配置本机模型").click()
+                    page.get_by_text("本机模型已配置", exact=True).wait_for()
                     page.get_by_role("button", name="退出登录并断开").click()
                     page.get_by_role("button", name="飞书登录", exact=True).wait_for()
                     assert agent.store.get() is None
