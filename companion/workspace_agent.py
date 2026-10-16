@@ -92,21 +92,40 @@ class Agent:
         self.browser = browser
         self.helper = str(Path(helper or sys.argv[0]).resolve())
         self.metadata = None
+        self.selected = None
+        self.providers = {}
         if self.config:
-            if self.config.get("version") != 1:
+            version = self.config.get("version")
+            if version == 1:
+                self.providers = {"authentik": self.config}
+            elif version == 2:
+                self.providers = self.config.get("providers", {})
+            else:
                 raise AgentError("UNSUPPORTED_CONFIG_VERSION")
-            for field in ("issuer", "policy_endpoint", "credential_endpoint"):
-                secure_url(self.config[field])
-            if not self.config.get("client_id"):
-                raise AgentError("CLIENT_ID_REQUIRED")
+            if not self.providers or set(self.providers) - {"feishu", "authentik"}:
+                raise AgentError("INVALID_PROVIDERS")
+            for provider in self.providers.values():
+                for field in ("issuer", "policy_endpoint", "credential_endpoint"):
+                    secure_url(provider[field])
+                if not provider.get("client_id"):
+                    raise AgentError("CLIENT_ID_REQUIRED")
         account = hashlib.sha256(
             (str(self.path) + json.dumps(self.config, sort_keys=True)).encode()
         ).hexdigest()
         self.store = store or CredentialStore(account)
 
+    def provider(self):
+        session = self.store.get()
+        name = self.selected or (
+            session.get("provider", "authentik") if session else None
+        )
+        if name not in self.providers:
+            raise AgentError("SIGN_IN_REQUIRED")
+        return self.providers[name]
+
     def discover(self):
         if self.metadata is None:
-            issuer = self.config["issuer"]
+            issuer = self.provider()["issuer"]
             response = requests.get(
                 issuer.rstrip("/") + "/.well-known/openid-configuration",
                 timeout=15,
@@ -131,15 +150,15 @@ class Agent:
             response.json(),
             claims_cls=CodeIDToken,
             claims_options={
-                "iss": {"essential": True, "value": self.config["issuer"]},
-                "aud": {"essential": True, "value": self.config["client_id"]},
+                "iss": {"essential": True, "value": self.provider()["issuer"]},
+                "aud": {"essential": True, "value": self.provider()["client_id"]},
                 "exp": {"essential": True},
                 "iat": {"essential": True},
                 "sub": {"essential": True},
             },
             claims_params={
                 "nonce": nonce,
-                "client_id": self.config["client_id"],
+                "client_id": self.provider()["client_id"],
                 "access_token": token["access_token"],
             },
         )
@@ -155,12 +174,20 @@ class Agent:
 
     def client(self, **kwargs):
         return OAuth2Session(
-            self.config["client_id"], token_endpoint_auth_method="none", **kwargs
+            self.provider()["client_id"], token_endpoint_auth_method="none", **kwargs
         )
 
-    def login(self):
+    def login(self, provider=None):
         if self.store.get():
             raise AgentError("SIGN_OUT_FIRST")
+        if provider is None:
+            if len(self.providers) != 1:
+                raise AgentError("PROVIDER_REQUIRED")
+            provider = next(iter(self.providers))
+        if provider not in self.providers:
+            raise AgentError("PROVIDER_NOT_CONFIGURED")
+        self.selected = provider
+        self.metadata = None
         meta = self.discover()
         nonce, state, verifier = (secrets.token_urlsafe(32) for _ in range(3))
         callback = []
@@ -186,7 +213,7 @@ class Agent:
             def log_message(self, *_):
                 pass
 
-        port = self.config.get("redirect_port", 47831)
+        port = self.provider().get("redirect_port", 47831)
 
         class CallbackServer(HTTPServer):
             def get_request(self):
@@ -199,7 +226,9 @@ class Agent:
             redirect = f"http://127.0.0.1:{server.server_port}/callback"
             with self.client(
                 redirect_uri=redirect,
-                scope="openid profile offline_access",
+                scope="openid profile"
+                if provider == "feishu"
+                else "openid profile offline_access",
                 code_challenge_method="S256",
             ) as client:
                 url, _ = client.create_authorization_url(
@@ -228,7 +257,9 @@ class Agent:
                     allow_redirects=False,
                 )
         identity = self.validate_identity(token, nonce=nonce)
-        self.store.set({"token": dict(token), "identity": identity})
+        self.store.set(
+            {"provider": provider, "token": dict(token), "identity": identity}
+        )
         return self.status()
 
     def access_token(self):
@@ -256,9 +287,18 @@ class Agent:
             token = refreshed
         return token["access_token"]
 
+    def token_args(self, provider):
+        return ["--config", str(self.path), "token-" + provider]
+
     def status(self):
         if not self.config:
-            return {"state": "unconfigured", "name": None, "codex": False}
+            return {
+                "state": "unconfigured",
+                "name": None,
+                "codex": False,
+                "providers": [],
+                "provider": None,
+            }
         session = self.store.get()
         state = "signed_out" if not session else "signed_in"
         if session and session["token"].get("expires_at", 0) <= time.time():
@@ -273,11 +313,15 @@ class Agent:
             profile = document.get("profiles", {}).get("pilgrim", {})
             configured = (
                 auth.get("command") == self.helper
-                and auth.get("args") == ["--config", str(self.path), "token"]
+                and session is not None
+                and auth.get("args")
+                == self.token_args(session.get("provider", "authentik"))
                 and profile.get("model_provider") == "pilgrim"
                 and bool(profile.get("model"))
             )
         return {
+            "providers": list(self.providers),
+            "provider": session.get("provider", "authentik") if session else None,
             "state": state,
             "name": session["identity"]["name"] if session else None,
             "codex": configured,
@@ -285,7 +329,7 @@ class Agent:
 
     def policy(self):
         response = requests.get(
-            self.config["policy_endpoint"],
+            self.provider()["policy_endpoint"],
             headers={"Authorization": "Bearer " + self.access_token()},
             timeout=15,
             allow_redirects=False,
@@ -318,10 +362,14 @@ class Agent:
             providers = doc.setdefault("model_providers", tomlkit.table())
             profiles = doc.setdefault("profiles", tomlkit.table())
             existing = providers.get("pilgrim")
-            expected_args = ["--config", str(self.path), "token"]
+            expected_args = self.token_args(
+                self.store.get().get("provider", "authentik")
+            )
+            owned_args = [self.token_args(name) for name in self.providers]
+            owned_args.append(["--config", str(self.path), "token"])
             if existing and (
                 existing.get("auth", {}).get("command") != self.helper
-                or existing.get("auth", {}).get("args") != expected_args
+                or existing.get("auth", {}).get("args") not in owned_args
             ):
                 raise AgentError("CODEX_PROVIDER_CONFLICT")
             if (
@@ -358,7 +406,7 @@ class Agent:
 
     def token(self):
         response = requests.post(
-            self.config["credential_endpoint"],
+            self.provider()["credential_endpoint"],
             json={"audience": "codex"},
             headers={"Authorization": "Bearer " + self.access_token()},
             timeout=15,
@@ -381,8 +429,8 @@ class Agent:
         url = secure_url(policy["network"]["profile_endpoint"])
         # Do not forward an identity credential to an arbitrary policy URL.
         if (urlsplit(url).scheme, urlsplit(url).netloc) != (
-            urlsplit(self.config["policy_endpoint"]).scheme,
-            urlsplit(self.config["policy_endpoint"]).netloc,
+            urlsplit(self.provider()["policy_endpoint"]).scheme,
+            urlsplit(self.provider()["policy_endpoint"]).netloc,
         ):
             raise AgentError("PROFILE_ORIGIN_MISMATCH")
         response = requests.get(
@@ -413,7 +461,7 @@ class Agent:
                                 data={
                                     "token": session["token"][kind],
                                     "token_type_hint": kind,
-                                    "client_id": self.config["client_id"],
+                                    "client_id": self.provider()["client_id"],
                                 },
                                 timeout=15,
                                 allow_redirects=False,
@@ -425,6 +473,8 @@ class Agent:
             revoked = False
         finally:
             self.store.clear()
+            self.selected = None
+            self.metadata = None
         return {**self.status(), "remote_revoked": revoked}
 
     def run(self, action):
@@ -433,6 +483,19 @@ class Agent:
         if not self.config:
             raise AgentError("NOT_CONFIGURED")
         with FileLock(str(self.path) + ".lock", timeout=1):
+            if action in ("token-feishu", "token-authentik"):
+                session = self.store.get()
+                if not session:
+                    raise AgentError("SIGN_IN_REQUIRED")
+                if session.get("provider", "authentik") != action.removeprefix(
+                    "token-"
+                ):
+                    raise AgentError("PROVIDER_MISMATCH")
+                return self.token()
+            if action == "token" and self.config["version"] == 2:
+                raise AgentError("PROVIDER_REQUIRED")
+            if action in ("login-feishu", "login-authentik"):
+                return self.login(action.removeprefix("login-"))
             return getattr(self, action.replace("-", "_"))()
 
 
@@ -447,12 +510,27 @@ def main():
     )
     parser.add_argument(
         "action",
-        choices=["status", "login", "logout", "configure", "token", "network-profile"],
+        choices=[
+            "status",
+            "login",
+            "login-feishu",
+            "login-authentik",
+            "logout",
+            "configure",
+            "token",
+            "token-feishu",
+            "token-authentik",
+            "network-profile",
+        ],
     )
     args = parser.parse_args()
     try:
         value = Agent(args.config).run(args.action)
-        print(value if args.action == "token" else json.dumps(value))
+        print(
+            value
+            if args.action == "token" or args.action.startswith("token-")
+            else json.dumps(value)
+        )
     except Exception as error:
         # Library errors may contain callback URLs or tokens; never emit them.
         code = (

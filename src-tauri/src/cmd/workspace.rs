@@ -8,6 +8,8 @@ use tokio::process::Command;
 pub enum WorkspaceAction {
     Status,
     Login,
+    LoginFeishu,
+    LoginAuthentik,
     Configure,
     Connect,
     Disconnect,
@@ -24,10 +26,21 @@ pub enum WorkspaceState {
 }
 
 #[derive(serde::Deserialize, serde::Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceProvider {
+    Feishu,
+    Authentik,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, specta::Type)]
 pub struct WorkspaceStatus {
     state: WorkspaceState,
     name: Option<String>,
     codex: bool,
+    #[serde(default)]
+    providers: Vec<WorkspaceProvider>,
+    #[serde(default)]
+    provider: Option<WorkspaceProvider>,
     #[serde(default)]
     network_enabled: bool,
     #[serde(default)]
@@ -131,6 +144,8 @@ pub async fn workspace_action(action: WorkspaceAction) -> CmdResult<WorkspaceSta
             Err(error) => return Err(error),
         },
         WorkspaceAction::Login => companion("login").await?,
+        WorkspaceAction::LoginFeishu => companion("login-feishu").await?,
+        WorkspaceAction::LoginAuthentik => companion("login-authentik").await?,
         WorkspaceAction::Configure => companion("configure").await?,
         WorkspaceAction::Connect => {
             connect().await?;

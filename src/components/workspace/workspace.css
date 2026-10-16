@@ -187,8 +187,17 @@
   .workspace-identity {
     flex-wrap: wrap;
   }
+  .workspace-login-options {
+    flex-basis: 100%;
+  }
   .workspace-navigation {
     min-width: 140px;
     padding: 20px 8px;
   }
+}
+
+.workspace-login-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }

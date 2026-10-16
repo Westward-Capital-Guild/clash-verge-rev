@@ -36,7 +36,9 @@ class MemoryStore:
 
 
 class Provider:
-    def __init__(self):
+    def __init__(self, *, refresh=True):
+        self.refresh = refresh
+        self.last_scope = None
         self.key = JsonWebKey.generate_key(
             "RSA", 2048, is_private=True, options={"kid": "smoke"}
         )
@@ -85,6 +87,7 @@ class Provider:
                     self.reply({"keys": [provider.key.as_dict(is_private=False)]})
                 elif path.path == "/authorize":
                     query = parse_qs(path.query)
+                    provider.last_scope = query["scope"][0]
                     assert query["code_challenge_method"] == ["S256"]
                     code = str(len(provider.codes) + 1)
                     provider.codes[code] = query
@@ -169,7 +172,11 @@ class Provider:
                             "access_token": "smoke-access",
                             "token_type": "Bearer",
                             "expires_in": 300,
-                            "refresh_token": "smoke-refresh",
+                            **(
+                                {"refresh_token": "smoke-refresh"}
+                                if provider.refresh
+                                else {}
+                            ),
                             "id_token": token,
                         }
                     )
@@ -424,3 +431,72 @@ def test_provisioned_profile_forwards_through_real_mihomo(environment, tmp_path)
         finally:
             process.terminate()
             process.wait(timeout=10)
+
+
+def test_two_providers_keep_sessions_and_gateways_separate(tmp_path, monkeypatch):
+    feishu, authentik = Provider(refresh=False), Provider()
+    try:
+        config = tmp_path / "deployment.json"
+        providers = {
+            name: {
+                "issuer": server.issuer,
+                "client_id": "workspace-smoke",
+                "redirect_port": 0,
+                "policy_endpoint": server.base + "/policy",
+                "credential_endpoint": server.base + "/credential",
+            }
+            for name, server in (("feishu", feishu), ("authentik", authentik))
+        }
+        config.write_text(json.dumps({"version": 2, "providers": providers}))
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+        store = MemoryStore()
+        agent = Agent(
+            config, store=store, browser=feishu.browser, helper="/test/helper"
+        )
+        assert agent.status()["providers"] == ["feishu", "authentik"]
+        with pytest.raises(AgentError, match="PROVIDER_REQUIRED"):
+            agent.run("login")
+        assert agent.run("login-feishu")["provider"] == "feishu"
+        assert feishu.last_scope == "openid profile"
+        assert authentik.last_scope is None
+        assert agent.policy()["codex"]["base_url"] == feishu.base + "/v1"
+        assert agent.run("configure")["codex"]
+        assert agent.run("token-feishu") == "smoke-model-credential"
+        assert "MATCH,DIRECT" in agent.run("network-profile")["yaml"]
+        # A fresh CLI invocation must recover the selected provider from Keychain.
+        agent = Agent(
+            config, store=store, browser=authentik.browser, helper="/test/helper"
+        )
+        with pytest.raises(AgentError, match="SIGN_OUT_FIRST"):
+            agent.run("login-authentik")
+        store.value["token"]["expires_at"] = 1
+        with pytest.raises(AgentError, match="SESSION_EXPIRED"):
+            agent.run("token-feishu")
+        assert feishu.refresh_count == 0
+        assert agent.run("logout")["remote_revoked"]
+        assert len(feishu.revoked) == 1 and not authentik.revoked
+        assert agent.run("login-authentik")["provider"] == "authentik"
+        assert not agent.status()["codex"]
+        with pytest.raises(AgentError, match="PROVIDER_MISMATCH"):
+            agent.run("token-feishu")
+        with pytest.raises(AgentError, match="PROVIDER_REQUIRED"):
+            agent.run("token")
+        assert authentik.last_scope == "openid profile offline_access"
+        assert agent.policy()["codex"]["base_url"] == authentik.base + "/v1"
+        assert agent.run("configure")["codex"]
+        store.value["token"]["expires_at"] = 1
+        assert agent.run("token-authentik") == "smoke-model-credential"
+        assert authentik.refresh_count == 1
+        assert agent.run("logout")["remote_revoked"]
+        assert len(authentik.revoked) == 2
+        assert store.get() is None
+    finally:
+        feishu.close()
+        authentik.close()
+
+
+def test_unconfigured_provider_is_rejected_before_browser(environment):
+    agent, provider, store = environment
+    with pytest.raises(AgentError, match="PROVIDER_NOT_CONFIGURED"):
+        agent.run("login-feishu")
+    assert provider.last_scope is None and store.get() is None

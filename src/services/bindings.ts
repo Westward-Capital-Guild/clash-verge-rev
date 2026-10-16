@@ -1058,10 +1058,14 @@ export type WebDavFile = {
 export type WorkspaceAction =
   | 'status'
   | 'login'
+  | 'login_feishu'
+  | 'login_authentik'
   | 'configure'
   | 'connect'
   | 'disconnect'
   | 'logout'
+
+export type WorkspaceProvider = 'feishu' | 'authentik'
 
 export type WorkspaceState =
   | 'unconfigured'
@@ -1073,6 +1077,8 @@ export type WorkspaceStatus = {
   state: WorkspaceState
   name: string | null
   codex: boolean
+  providers?: WorkspaceProvider[]
+  provider?: WorkspaceProvider | null
   network_enabled?: boolean
   remote_revoked?: boolean | null
 }

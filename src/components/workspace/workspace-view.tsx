@@ -88,7 +88,7 @@ export const WorkspaceView = ({
       )}
       {pending && (
         <div className="workspace-message" role="status">
-          {pending === 'login'
+          {pending.startsWith('login')
             ? '请在系统浏览器中完成企业登录，最长等待两分钟。'
             : '正在处理，请稍候…'}
         </div>
@@ -107,19 +107,36 @@ export const WorkspaceView = ({
           <div className="workspace-identity-text">
             <h2>{status?.name || '连接你的工作账号'}</h2>
             <p>
-              {status ? states[status.state] : '状态待确认'} · 企业统一身份认证
+              {status ? states[status.state] : '状态待确认'} ·{' '}
+              {status?.provider === 'feishu'
+                ? '飞书'
+                : status?.provider === 'authentik'
+                  ? '企业 SSO'
+                  : '企业统一身份认证'}
             </p>
           </div>
           {status &&
             status.state !== 'unconfigured' &&
             (status.state === 'signed_out' ? (
-              <button
-                className="workspace-primary"
-                disabled={pending !== null}
-                onClick={action('login')}
-              >
-                企业登录
-              </button>
+              <div className="workspace-login-options">
+                {status.providers?.includes('feishu') && (
+                  <button
+                    className="workspace-primary"
+                    disabled={pending !== null}
+                    onClick={action('login_feishu')}
+                  >
+                    飞书登录
+                  </button>
+                )}
+                {status.providers?.includes('authentik') && (
+                  <button
+                    disabled={pending !== null}
+                    onClick={action('login_authentik')}
+                  >
+                    企业 SSO 登录
+                  </button>
+                )}
+              </div>
             ) : (
               <button disabled={pending !== null} onClick={action('logout')}>
                 退出登录并断开

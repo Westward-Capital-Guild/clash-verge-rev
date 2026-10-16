@@ -36,12 +36,17 @@ def main():
         config.write_text(
             json.dumps(
                 {
-                    "version": 1,
-                    "issuer": provider.issuer,
-                    "client_id": "workspace-smoke",
-                    "redirect_port": 0,
-                    "policy_endpoint": provider.base + "/policy",
-                    "credential_endpoint": provider.base + "/credential",
+                    "version": 2,
+                    "providers": {
+                        name: {
+                            "issuer": provider.issuer,
+                            "client_id": "workspace-smoke",
+                            "redirect_port": 0,
+                            "policy_endpoint": provider.base + "/policy",
+                            "credential_endpoint": provider.base + "/credential",
+                        }
+                        for name in ("feishu", "authentik")
+                    },
                 }
             )
         )
@@ -82,7 +87,14 @@ def main():
                 action = json.loads(
                     self.rfile.read(int(self.headers["Content-Length"]))
                 )["action"]
-                if action not in ("status", "login", "configure", "logout"):
+                action = action.replace("_", "-")
+                if action not in (
+                    "status",
+                    "login-authentik",
+                    "login-feishu",
+                    "configure",
+                    "logout",
+                ):
                     self.send_error(400)
                     return
                 try:
@@ -145,7 +157,7 @@ def main():
                     errors = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.goto(url)
-                    page.get_by_role("button", name="企业登录", exact=True).click()
+                    page.get_by_role("button", name="企业 SSO 登录", exact=True).click()
                     page.get_by_role("heading", name="Smoke User").wait_for()
                     page.get_by_role("button", name="同步 Codex 配置").click()
                     page.get_by_text("Codex 已配置", exact=True).wait_for()
@@ -170,8 +182,23 @@ def main():
                     page.get_by_role("button", name="同步 Codex 配置").click()
                     page.get_by_role("alert").wait_for()
                     page.get_by_role("button", name="退出登录并断开").click()
-                    page.get_by_role("button", name="企业登录", exact=True).wait_for()
+                    page.get_by_role(
+                        "button", name="企业 SSO 登录", exact=True
+                    ).wait_for()
                     assert agent.store.get() is None
+                    provider.fail_policy = False
+                    page.get_by_role("button", name="飞书登录", exact=True).click()
+                    page.get_by_role("heading", name="Smoke User").wait_for()
+                    assert agent.store.get()["provider"] == "feishu"
+                    page.get_by_role("button", name="同步 Codex 配置").click()
+                    page.get_by_text("Codex 已配置", exact=True).wait_for()
+                    page.get_by_role("button", name="退出登录并断开").click()
+                    page.get_by_role("button", name="飞书登录", exact=True).wait_for()
+                    assert agent.store.get() is None
+                    assert page.locator(".workspace-identity-text").bounding_box()["width"] >= 200
+                    page.screenshot(
+                        path=str(screenshot_dir / "login-providers.png"), full_page=True
+                    )
                     assert not errors, errors
                     browser.close()
                 print(
@@ -179,7 +206,7 @@ def main():
                         {
                             "result": "passed",
                             "flows": [
-                                "signed OIDC login",
+                                "Authentik and Feishu OIDC login",
                                 "Codex configuration",
                                 "policy failure",
                                 "logout",

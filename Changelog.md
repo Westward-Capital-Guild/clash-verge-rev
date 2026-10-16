@@ -1,5 +1,7 @@
 ## Pilgrim Workspace (unreleased)
 
+- Add separate Feishu and enterprise SSO sign-in with provider-specific configuration.
+
 - Add an employee workbench with company sign-in, managed connectivity and Codex configuration.
 
 ## v2.5.9

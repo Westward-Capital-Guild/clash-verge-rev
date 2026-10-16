@@ -55,16 +55,32 @@ process through `PILGRIM_WORKSPACE_AGENT`. Supply the deployment JSON path throu
 `PILGRIM_WORKSPACE_CONFIG`. Both are process configuration, never frontend inputs.
 The default deployment path is `~/.config/pilgrim-workspace/config.json`.
 
+Version 2 enables independent Feishu and Authentik buttons. Each provider owns
+its issuer, client and downstream endpoints; only the selected provider receives
+its credentials. Remove a provider to hide its entry. Version 1 configurations
+remain supported as a single Authentik entry.
+
 Example deployment JSON (all domains below are placeholders):
 
 ```json
 {
-  "version": 1,
-  "issuer": "https://identity.example.invalid/application/o/workspace/",
-  "client_id": "workspace-desktop",
-  "redirect_port": 47831,
-  "policy_endpoint": "https://gateway.example.invalid/workspace/policy",
-  "credential_endpoint": "https://gateway.example.invalid/workspace/credential"
+  "version": 2,
+  "providers": {
+    "feishu": {
+      "issuer": "https://passport.example.invalid",
+      "client_id": "workspace-desktop",
+      "redirect_port": 47831,
+      "policy_endpoint": "https://gateway.example.invalid/feishu/workspace/policy",
+      "credential_endpoint": "https://gateway.example.invalid/feishu/workspace/credential"
+    },
+    "authentik": {
+      "issuer": "https://identity.example.invalid/application/o/workspace/",
+      "client_id": "workspace-desktop",
+      "redirect_port": 47831,
+      "policy_endpoint": "https://gateway.example.invalid/authentik/workspace/policy",
+      "credential_endpoint": "https://gateway.example.invalid/authentik/workspace/credential"
+    }
+  }
 }
 ```
 
@@ -93,11 +109,24 @@ and a two-minute callback timeout do not create a session. Sign-in uses the syst
 browser. An expired session can be renewed by the Codex helper if a refresh token
 is available, or the employee can sign out and sign in again.
 
-Feishu login is provided through the configured OIDC identity broker's login
-flow (for example, an existing Feishu-to-OIDC bridge). This client does **not**
-treat native Feishu OAuth endpoints as OIDC or embed a Feishu app secret. Actual
-broker federation and tenant registration must be supplied and tested by the
-private deployment; this change does not provision an Authentik tenant.
+The Feishu button connects to the company's Feishu OIDC service,
+which owns the upstream Feishu login. It does not require Authentik federation
+and never embeds a Feishu app secret. The company OIDC server must include
+native public-client support: discovery advertises `none` client authentication
+and `S256`, token exchange enforces the verifier, and `/oauth2/revoke` revokes the
+presented native client's token. An older server is rejected; no secret-based or
+non-PKCE fallback is provided. Register a distinct public desktop client with the
+exact loopback callback. The private service's deployment/runbook owns registration.
+
+Feishu requests `openid profile`; the company Feishu provider does not currently issue refresh
+tokens. Expiry requires signing out and back in. Authentik requests
+`openid profile offline_access` and retains refresh support. The desktop permits
+one active provider at a time: sign out before switching. Session provider identity
+persists in the OS keyring. The Codex helper command is bound to that provider;
+after switching, synchronize Codex again before use. A stale configuration
+cannot fetch the new provider's credential for the previous provider's model URL. Accounts are never merged by display name or email.
+Gateway validators must accept the matching issuer/client and enforce their own
+authorization; configuring two UI entries does not configure gateway trust.
 
 ## Private gateway contract
 
