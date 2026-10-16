@@ -21,7 +21,7 @@
     "createUpdaterArtifacts": false
   },
   "build": {
-    "beforeBuildCommand": "pnpm run web:build",
+    "beforeBuildCommand": "pnpm workspace:companion && pnpm run web:build",
     "frontendDist": "../dist",
     "beforeDevCommand": "pnpm run web:dev",
     "devUrl": "http://localhost:3000/",

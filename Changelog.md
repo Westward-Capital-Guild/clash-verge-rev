@@ -1,5 +1,11 @@
 ## Pilgrim Workspace (unreleased)
 
+- Connect company sign-in to personal network delivery and authorized SSH development hosts without employee configuration.
+
+- Preserve existing proxy and SSH settings, and stop when a host identity or managed key conflicts.
+
+- Clarify that model setup applies to local Codex and does not add a remote development host.
+
 - Add separate Feishu and enterprise SSO sign-in with provider-specific configuration.
 
 - Add an employee workbench with company sign-in, managed connectivity and Codex configuration.

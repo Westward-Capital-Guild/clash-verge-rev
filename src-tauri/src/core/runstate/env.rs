@@ -27,6 +27,7 @@ pub struct RealEnv;
 
 impl RunStateEnv for RealEnv {
     async fn probe_service_version(&self) -> Result<ServiceVersionReply> {
+        crate::core::service::require_privileged_service()?;
         // The IPC client would otherwise back off for about two minutes before failing.
         #[cfg(windows)]
         if let Some(reason) = tokio::task::spawn_blocking(crate::core::service::service_stop_reason)
@@ -70,6 +71,9 @@ impl RunStateEnv for RealEnv {
     }
 
     async fn trusted_install_evidence(&self) -> Result<bool> {
+        if crate::core::service::require_privileged_service().is_err() {
+            return Ok(false);
+        }
         let registered = tokio::task::spawn_blocking(crate::core::service::trusted_service_evidence)
             .await
             .context("service registration probe did not finish")??;
@@ -114,6 +118,17 @@ impl RunStateEnv for RealEnv {
 
 #[cfg(test)]
 pub use fake::FakeEnv;
+
+#[cfg(test)]
+mod workspace_tests {
+    use super::{RealEnv, RunStateEnv};
+
+    #[tokio::test]
+    async fn workspace_never_probes_the_upstream_service_or_installation() {
+        assert!(RealEnv.probe_service_version().await.is_err());
+        assert!(matches!(RealEnv.trusted_install_evidence().await, Ok(false)));
+    }
+}
 
 #[cfg(test)]
 mod fake {

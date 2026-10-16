@@ -14,6 +14,7 @@
     "build:fast": "cross-env NODE_OPTIONS='--max-old-space-size=4096' tauri build -- --profile fast-release",
     "tauri": "tauri",
     "web:dev": "vite",
+    "workspace:companion": "uv run --project companion --extra bundle --frozen python scripts/package-companion.py",
     "web:build": "tsc --noEmit && vite build",
     "web:serve": "vite preview",
     "prebuild": "node scripts/prebuild.mjs",

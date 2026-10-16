@@ -201,3 +201,11 @@
   flex-wrap: wrap;
   gap: 8px;
 }
+
+.workspace-shell > .workspace-service {
+  margin-top: 24px;
+}
+.workspace-remote-host {
+  margin-top: 20px;
+  border-top: 1px solid #d9ded5;
+}

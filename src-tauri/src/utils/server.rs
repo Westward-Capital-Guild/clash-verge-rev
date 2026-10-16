@@ -162,14 +162,27 @@ fn instance_auth(token: String) -> impl warp::Filter<Extract = (), Error = warp:
         .untuple_one()
 }
 
+#[cfg(feature = "verge-dev")]
+fn dev_quit_route(token: String) -> impl warp::Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("commands" / "dev" / "quit")
+        .and(warp::post())
+        .and(instance_auth(token))
+        .map(|| {
+            if !COMMANDS_READY.load(Ordering::Acquire) {
+                return warp::reply::with_status("starting", warp::http::StatusCode::SERVICE_UNAVAILABLE);
+            }
+            AsyncHandler::spawn(|| async {
+                crate::feat::quit().await;
+            });
+            warp::reply::with_status("quitting", warp::http::StatusCode::ACCEPTED)
+        })
+}
+
 fn start_embedded_server(listener: tokio::net::TcpListener, token: String) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let _ = SHUTDOWN_SENDER.set(Mutex::new(Some(shutdown_tx)));
 
-    #[cfg(feature = "verge-dev")]
-    let auth = instance_auth(token);
-    #[cfg(not(feature = "verge-dev"))]
-    let auth = instance_auth(token);
+    let auth = instance_auth(token.clone());
 
     let visible = warp::path!("commands" / "visible").and_then(|| async {
         if !COMMANDS_READY.load(Ordering::Acquire) {
@@ -233,6 +246,8 @@ fn start_embedded_server(listener: tokio::net::TcpListener, token: String) {
         });
 
     let commands = auth.clone().and(visible).or(auth.and(scheme)).or(pac);
+    #[cfg(feature = "verge-dev")]
+    let commands = commands.or(dev_quit_route(token));
     AsyncHandler::spawn(move || async move {
         warp::serve(commands)
             .incoming(listener)
@@ -399,4 +414,43 @@ fn write_instance_record(path: &Path, record: &InstanceRecord) -> Result<()> {
     drop(file);
     std::fs::rename(&temporary, path).context("failed to replace singleton record")?;
     Ok(())
+}
+
+#[cfg(all(test, feature = "verge-dev"))]
+mod dev_quit_tests {
+    use super::{INSTANCE_TOKEN_HEADER, dev_quit_route};
+    use warp::http::StatusCode;
+
+    #[tokio::test]
+    async fn dev_quit_requires_authenticated_post_and_retries_during_startup() {
+        let route = dev_quit_route("test-instance-token".to_string());
+        let request = || warp::test::request().method("POST").path("/commands/dev/quit");
+
+        assert_eq!(request().reply(&route).await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            request()
+                .header(INSTANCE_TOKEN_HEADER, "wrong-token")
+                .reply(&route)
+                .await
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            warp::test::request()
+                .path("/commands/dev/quit")
+                .header(INSTANCE_TOKEN_HEADER, "test-instance-token")
+                .reply(&route)
+                .await
+                .status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        assert_eq!(
+            request()
+                .header(INSTANCE_TOKEN_HEADER, "test-instance-token")
+                .reply(&route)
+                .await
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
 }

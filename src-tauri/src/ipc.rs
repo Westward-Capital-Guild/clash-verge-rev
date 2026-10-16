@@ -5,6 +5,7 @@ pub fn builder() -> tauri_specta::Builder<tauri::Wry> {
         .types(&platform_types())
         .commands(tauri_specta::collect_commands![
             cmd::workspace_action,
+            cmd::workspace_remote,
             tauri_plugin_clash_verge_sysinfo::commands::get_system_info,
             tauri_plugin_clash_verge_sysinfo::commands::get_app_uptime,
             tauri_plugin_clash_verge_sysinfo::commands::export_diagnostic_info::<tauri::Wry>,

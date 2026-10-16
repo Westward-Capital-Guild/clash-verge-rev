@@ -1,3 +1,7 @@
+#[cfg(target_os = "macos")]
+#[path = "macos_proxy_lease.rs"]
+mod macos_proxy_lease;
+
 use crate::{
     config::{Config, MixedPort},
     core::proxy_control::{self, SystemProxyStateUnknown},
@@ -90,6 +94,33 @@ fn target_is_already_in_place(snapshot: &sysproxy::ProxySnapshot, sys: &Sysproxy
     } else {
         // Bypass state is inert while every proxy is disabled.
         snapshot.is_all_disabled()
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, PartialEq, Eq)]
+enum ProxyOwnershipAction {
+    Preserve,
+    Apply,
+    Refuse,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn proxy_ownership_action(
+    snapshot: &sysproxy::ProxySnapshot,
+    previous: &(Sysproxy, Autoproxy),
+    enabling: bool,
+) -> ProxyOwnershipAction {
+    let owned = previous.0.enable || previous.1.enable;
+    if !enabling && !owned {
+        return ProxyOwnershipAction::Preserve;
+    }
+    if snapshot.is_all_disabled() || (owned && target_is_already_in_place(snapshot, &previous.0, &previous.1)) {
+        ProxyOwnershipAction::Apply
+    } else if enabling {
+        ProxyOwnershipAction::Refuse
+    } else {
+        ProxyOwnershipAction::Preserve
     }
 }
 
@@ -241,6 +272,8 @@ async fn current_os_proxy_state(sys: Sysproxy, auto: Autoproxy) -> OsProxyState 
 }
 
 pub(crate) struct Sysopt {
+    #[cfg(target_os = "macos")]
+    proxy_lease: parking_lot::Mutex<Option<macos_proxy_lease::ProxyLease>>,
     update_lock: TokioMutex<()>,
     guard_operation_lock: TokioMutex<()>,
     reset_sysproxy: AtomicBool,
@@ -251,6 +284,8 @@ pub(crate) struct Sysopt {
 impl Default for Sysopt {
     fn default() -> Self {
         Self {
+            #[cfg(target_os = "macos")]
+            proxy_lease: parking_lot::Mutex::new(None),
             update_lock: TokioMutex::new(()),
             guard_operation_lock: TokioMutex::new(()),
             reset_sysproxy: AtomicBool::new(false),
@@ -430,6 +465,36 @@ impl Sysopt {
             verge.enable_proxy_guard.unwrap_or_default(),
         );
 
+        #[cfg(target_os = "macos")]
+        {
+            let previous = self.inner_proxy.read().clone();
+            let snapshot = tokio::task::spawn_blocking(Sysproxy::snapshot).await??;
+            match proxy_ownership_action(&snapshot, &previous, sys_enable) {
+                ProxyOwnershipAction::Preserve => {
+                    self.stop_proxy_guard().await;
+                    let (sys, auto) = &mut *self.inner_proxy.write();
+                    sys.enable = false;
+                    auto.enable = false;
+                    return Ok(());
+                }
+                ProxyOwnershipAction::Refuse => {
+                    self.stop_proxy_guard().await;
+                    anyhow::bail!(
+                        "Another VPN/proxy owns the system proxy. Quit the third-party VPN before connecting Pilgrim Workspace; the existing proxy has been preserved."
+                    );
+                }
+                ProxyOwnershipAction::Apply => {}
+            }
+            if sys_enable && self.proxy_lease.lock().is_none() {
+                let lease = tokio::task::spawn_blocking(macos_proxy_lease::ProxyLease::capture).await??;
+                *self.proxy_lease.lock() = Some(lease);
+            }
+            if !sys_enable && let Some(result) = self.restore_proxy_lease().await {
+                result?;
+                return Ok(());
+            }
+        }
+
         let (sys, auto, guard_type) = {
             let (sys, auto) = &mut *self.inner_proxy.write();
             sys.host = proxy_host.into();
@@ -491,6 +556,8 @@ impl Sysopt {
         };
 
         // Only a step that actually wrote is evidence the OS changed; a skipped one is not.
+        #[cfg(target_os = "macos")]
+        let applied_target = (sys.clone(), auto.clone());
         let applied = tokio::task::spawn_blocking(move || {
             let mut earlier_step_reached_os = false;
             for step in apply_steps {
@@ -522,9 +589,45 @@ impl Sysopt {
             }
         }
 
+        #[cfg(target_os = "macos")]
+        let lease = self.proxy_lease.lock().take();
+        #[cfg(target_os = "macos")]
+        if let Some(mut lease) = lease {
+            let result = lease.record_applied(&applied_target.0, &applied_target.1);
+            *self.proxy_lease.lock() = Some(lease);
+            result?;
+        }
         // Never point the guard at a target that failed to reach the OS.
         self.access_guard().write().set_guard_type(guard_type);
         Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn restore_proxy_lease(&self) -> Option<Result<()>> {
+        let lease = self.proxy_lease.lock().take()?;
+        self.stop_proxy_guard().await;
+        let result = tokio::task::spawn_blocking(move || lease.restore())
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|result| result);
+        let previous = self.inner_proxy.read().clone();
+        {
+            let (sys, auto) = &mut *self.inner_proxy.write();
+            sys.enable = false;
+            auto.enable = false;
+        }
+        if result.is_err() {
+            // A refused restoration must not strand an owned proxy when the core exits.
+            if let Ok(current) = Sysproxy::snapshot()
+                && proxy_ownership_action(&current, &previous, false) == ProxyOwnershipAction::Apply
+            {
+                let mut off = previous;
+                off.0.enable = false;
+                off.1.enable = false;
+                let _ = disable_all_proxies(off.0, off.1).await;
+            }
+        }
+        Some(result)
     }
 
     /// reset the sysproxy
@@ -540,8 +643,24 @@ impl Sysopt {
             self.reset_sysproxy.store(false, Ordering::SeqCst);
         }
         let _lock = self.update_lock.lock().await;
+        #[cfg(target_os = "macos")]
+        if let Some(result) = self.restore_proxy_lease().await {
+            return result;
+        }
         let _guard_operation = self.guard_operation_lock.lock().await;
         let drained = self.stop_proxy_guard_locked().await;
+
+        #[cfg(target_os = "macos")]
+        {
+            let previous = self.inner_proxy.read().clone();
+            let snapshot = tokio::task::spawn_blocking(Sysproxy::snapshot).await??;
+            if proxy_ownership_action(&snapshot, &previous, false) == ProxyOwnershipAction::Preserve {
+                let (sys, auto) = &mut *self.inner_proxy.write();
+                sys.enable = false;
+                auto.enable = false;
+                return Ok(());
+            }
+        }
 
         // 直接关闭所有代理
         let (sys, auto) = {
@@ -579,6 +698,35 @@ mod tests {
     use parking_lot::Mutex;
     use std::collections::VecDeque;
     use sysproxy::{Autoproxy, Sysproxy};
+
+    #[test]
+    fn third_party_proxy_is_preserved_on_startup_and_exit_and_refuses_takeover() {
+        use super::{ProxyOwnershipAction, proxy_ownership_action};
+
+        let external = holding_global(1080);
+        let unowned = (Sysproxy::default(), Autoproxy::default());
+        assert_eq!(
+            proxy_ownership_action(&external, &unowned, false),
+            ProxyOwnershipAction::Preserve
+        );
+        assert_eq!(
+            proxy_ownership_action(&external, &unowned, true),
+            ProxyOwnershipAction::Refuse
+        );
+        let owned = (global_target(7897), pac_off());
+        assert_eq!(
+            proxy_ownership_action(&external, &owned, false),
+            ProxyOwnershipAction::Preserve
+        );
+        assert_eq!(
+            proxy_ownership_action(&holding_global(7897), &owned, false),
+            ProxyOwnershipAction::Apply
+        );
+        assert_eq!(
+            proxy_ownership_action(&holding_nothing(), &unowned, true),
+            ProxyOwnershipAction::Apply
+        );
+    }
 
     #[cfg(target_os = "macos")]
     use super::skip_without_network_service;

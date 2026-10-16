@@ -5,6 +5,9 @@ import type {
   WorkspaceClient,
   WorkspaceStatus,
 } from '@/services/workspace'
+import { workspaceErrorMessage } from '@/services/workspace'
+
+import { WorkspaceRemote } from './workspace-remote'
 
 import './workspace.css'
 
@@ -12,6 +15,16 @@ interface Props {
   client: WorkspaceClient
   page?: 'workbench' | 'development' | 'settings'
   onDiagnostics?: () => void
+}
+
+const networkStages: Record<string, string> = {
+  download_failed: '个人配置下载未完成，原有配置已保留。',
+  validation_failed: '个人配置未通过校验，原有配置已保留。',
+  import_failed: '个人配置导入未完成，原有配置已保留。',
+  activation_failed: '个人配置启用未完成，原有配置仍保留。',
+  proxy_enable_failed: '配置已导入，系统代理切换未完成。',
+  system_proxy_enabled_reachability_unverified:
+    '个人配置已下载、校验并导入；系统代理已启用，目标工作服务仍待验证。',
 }
 
 const states = {
@@ -40,8 +53,8 @@ export const WorkspaceView = ({
         if (next.remote_revoked === false) {
           setError('本机已退出，但服务端凭据撤销未完成。请联系管理员处理。')
         }
-      } catch {
-        setError('操作未完成。请检查企业配置、系统凭据库与网络，然后重试。')
+      } catch (failure) {
+        setError(workspaceErrorMessage(failure))
         try {
           setStatus(await client.run('status'))
         } catch {
@@ -93,9 +106,14 @@ export const WorkspaceView = ({
             : '正在处理，请稍候…'}
         </div>
       )}
+      {status?.code && (
+        <div className="workspace-message" role="status">
+          {workspaceErrorMessage({ code: status.code })}
+        </div>
+      )}
       {status?.state === 'unconfigured' && (
         <div className="workspace-message">
-          尚未接入企业环境。请由管理员安装伴随服务并提供本机企业配置。
+          公司自动接入服务尚未就绪，暂时无法登录。无需手动填写配置，请等待公司接入完成。
         </div>
       )}
 
@@ -116,21 +134,26 @@ export const WorkspaceView = ({
             </p>
           </div>
           {status &&
-            status.state !== 'unconfigured' &&
-            (status.state === 'signed_out' ? (
+            (status.state === 'signed_out' ||
+            status.state === 'unconfigured' ? (
               <div className="workspace-login-options">
-                {status.providers?.includes('feishu') && (
+                {(status.state === 'unconfigured' ||
+                  status.providers?.includes('feishu')) && (
                   <button
                     className="workspace-primary"
-                    disabled={pending !== null}
+                    disabled={
+                      pending !== null || status.state === 'unconfigured'
+                    }
                     onClick={action('login_feishu')}
                   >
                     飞书登录
                   </button>
                 )}
-                {status.providers?.includes('authentik') && (
+                {!status.company && status.providers?.includes('authentik') && (
                   <button
-                    disabled={pending !== null}
+                    disabled={
+                      pending !== null || status.state === 'unconfigured'
+                    }
                     onClick={action('login_authentik')}
                   >
                     企业 SSO 登录
@@ -158,12 +181,19 @@ export const WorkspaceView = ({
                     : '未连接'
                   : '状态待确认'}
               </span>
+              {status?.network_stage && (
+                <p role="status">{networkStages[status.network_stage]}</p>
+              )}
               <p>
-                按企业授权配置访问工作资源。系统连接状态不代表所有内部服务均可访问。
+                按企业授权下载、校验并导入个人网络配置。系统代理启用后，仍需检查目标工作服务是否可达。
               </p>
               <button
                 disabled={
-                  pending !== null || (!signedIn && !status?.network_enabled)
+                  pending !== null ||
+                  (!signedIn && !status?.network_enabled) ||
+                  (status?.company === true &&
+                    status.capabilities?.network !== 'granted' &&
+                    !status.network_enabled)
                 }
                 onClick={action(
                   status?.network_enabled ? 'disconnect' : 'connect',
@@ -171,45 +201,63 @@ export const WorkspaceView = ({
               >
                 {status?.network_enabled ? '断开连接' : '连接公司网络'}
               </button>
+              {status?.network_enabled && (
+                <button
+                  disabled={pending !== null || !signedIn}
+                  onClick={action('update')}
+                >
+                  更新公司网络配置
+                </button>
+              )}
             </section>
           )}
-          <section className="workspace-service">
-            <p className="workspace-index">02 / DEVELOPMENT</p>
-            <h2>AI 开发环境</h2>
-            <span className="workspace-status">
-              {status?.codex ? 'Codex 已配置' : 'Codex 待配置'}
-            </span>
-            <p>同步公司的模型设置，凭据按需获取。保留你的其他开发配置。</p>
-            <button
-              disabled={pending !== null || !signedIn}
-              onClick={action('configure')}
-            >
-              同步 Codex 配置
-            </button>
-            {status?.codex && (
-              <p className="workspace-command">
-                启动：<code>codex --profile pilgrim</code>
-                <br />
-                {signedIn
-                  ? '已配置；模型可用性需在 Codex 中验证。'
-                  : '请先登录，再使用公司模型。'}
-              </p>
-            )}
-          </section>
+          {!status?.company && (
+            <section className="workspace-service">
+              <p className="workspace-index">02 / DEVELOPMENT</p>
+              <h2>本机模型服务</h2>
+              <span className="workspace-status">
+                {status?.codex ? '本机模型已配置' : '本机模型待配置'}
+              </span>
+              <p>同步公司的模型设置，凭据按需获取。保留你的其他开发配置。</p>
+              <button
+                disabled={pending !== null || !signedIn}
+                onClick={action('configure')}
+              >
+                配置本机模型
+              </button>
+              {status?.codex && (
+                <p className="workspace-command">
+                  在 Codex 中选择公司模型提供方（pilgrim）及获准模型。
+                  <br />
+                  {signedIn
+                    ? '已配置；模型可用性需在 Codex 中验证。'
+                    : '请先登录，再使用公司模型。'}
+                </p>
+              )}
+            </section>
+          )}
         </div>
+      )}
+
+      {page !== 'settings' && (
+        <WorkspaceRemote
+          client={client}
+          sessionState={`${status?.state}:${status?.provider ?? ''}`}
+        />
       )}
 
       {page === 'settings' && (
         <section className="workspace-service">
           <h2>支持与诊断</h2>
           <p>
-            企业账号和配置由管理员提供。需要排查连接问题时，可以打开高级网络设置。
+            企业接入由公司统一提供。需要排查连接问题时，可以打开高级网络设置。
           </p>
           <button onClick={onDiagnostics} disabled={!onDiagnostics}>
             高级网络设置
           </button>
           <p>
-            退出登录会清除本机登录凭据，并尝试撤销服务端会话及断开公司网络。
+            退出登录会清除本机登录凭据，并尝试撤销服务端会话及断开公司网络。已安装的
+            SSH 密钥和配置默认保留；退出不会撤销已有 SSH 访问。
           </p>
         </section>
       )}

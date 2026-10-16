@@ -1,1 +1,6 @@
-export type { WorkspaceAction, WorkspaceStatus } from './bindings'
+export type {
+  WorkspaceAction,
+  WorkspaceStatus,
+  WorkspaceRemoteAction,
+  WorkspaceRemoteStatus,
+} from './bindings'

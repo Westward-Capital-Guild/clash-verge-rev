@@ -6,6 +6,24 @@ or a separately deployed private gateway. A local device owner can still inspect
 the endpoints that their device needs; upstream service topology stays behind the
 gateway.
 
+Company builds inject one trusted HTTPS bootstrap URL using
+`PILGRIM_WORKSPACE_BOOTSTRAP_URL` at Rust build time. The native companion obtains
+bootstrap v1, displays Feishu only, and consumes policy v2. Service URLs and OIDC
+endpoints must share the bootstrap origin; redirects and employee JSON fallback
+are rejected. Network and development-host grants are independent. The initial
+API has no local model credential endpoint, and company mode never calls the
+legacy credential action or writes a Codex provider/profile.
+
+The source contains only generic protocol examples and synthetic fixtures. Supply
+company build input outside this checkout; do not use a `VITE_` variable or commit
+private build environment files. An uninjected build honestly shows unavailable
+company access. Developer-only legacy JSON below remains available for reusable
+OIDC regression tests, not employee onboarding.
+
+A public bootstrap response does not establish employee authorization or real
+business acceptance. Those require a real Feishu login and resources explicitly
+bound to that employee by the administrator.
+
 ## Local smoke
 
 Install the repository's pinned pnpm dependencies and Rust 1.99 toolchain. Then:
@@ -20,16 +38,18 @@ pnpm web:build
 cargo check -p clash-verge --features dev-sidecar
 ```
 
-The browser smoke uses `/usr/bin/chromium`. It drives the actual workbench through
+The browser smoke uses `/usr/bin/chromium` on Linux and Playwright's installed
+Chromium on other platforms. Set `WORKSPACE_SMOKE_BROWSER` to an existing Chromium
+browser's executable to override it. It drives the actual workbench through
 the actual companion using a local signed OIDC fixture with PKCE. Credentials are
 held in a test-only memory store and `CODEX_HOME` points to a temporary directory.
 It covers login, configuration, denial, logout and a 390px layout. The Linux
-x86_64 core smoke starts the downloaded real mihomo on an ephemeral loopback
+x86_64 and macOS core smoke starts the prepared real mihomo on an ephemeral loopback
 port and verifies an HTTP request through it; it never changes the host proxy,
 TUN or DNS. It skips explicitly if the core has not been downloaded.
 
 For the native Linux window smoke, build with `cargo build -p clash-verge --bin
-clash-verge --features dev-sidecar`, then run:
+pilgrim-workspace --features dev-sidecar`, then run:
 
 ```sh
 uv run --project companion --extra test --frozen python -c "import PIL"
@@ -49,18 +69,24 @@ Vite root and the production companion CLI has no plaintext credential-store mod
 
 ## Desktop companion
 
-Install Python 3.11+ and the companion using an isolated environment, for example
-`uv tool install ./companion`. Supply its absolute executable path to the desktop
-process through `PILGRIM_WORKSPACE_AGENT`. Supply the deployment JSON path through
-`PILGRIM_WORKSPACE_CONFIG`. Both are process configuration, never frontend inputs.
-The default deployment path is `~/.config/pilgrim-workspace/config.json`.
+Distribution builds run `pnpm workspace:companion` before the frontend build.
+Build machines require Python 3.11+, uv and the target architecture; `companion/uv.lock`
+pins the bundler and runtime dependencies. PyInstaller produces a native onedir
+runtime under the ignored `src-tauri/resources/companion/` directory. Tauri includes
+it as resources, and Rust resolves its executable from the app resource directory.
+Employees do not install Python, install a companion separately or set environment
+variables. Sign/notarize the complete bundle through the company release process.
+
+For local development only, `PILGRIM_WORKSPACE_AGENT` may select an absolute
+executable, and `PILGRIM_WORKSPACE_CONFIG` may select legacy fixture JSON. A company
+build's embedded bootstrap takes precedence and suppresses the JSON wiring.
 
 Version 2 enables independent Feishu and Authentik buttons. Each provider owns
 its issuer, client and downstream endpoints; only the selected provider receives
 its credentials. Remove a provider to hide its entry. Version 1 configurations
 remain supported as a single Authentik entry.
 
-Example deployment JSON (all domains below are placeholders):
+Developer fixture JSON (all domains below are placeholders; not employee instructions):
 
 ```json
 {
@@ -147,7 +173,7 @@ as the policy endpoint, because the companion sends the user's bearer credential
 HTTP redirects are not followed. Native Rust imports the YAML through upstream
 profile operations; tokens and profile contents never pass through the workbench
 WebView. Connecting selects the managed profile and enables the system proxy.
-It does not silently enable TUN. Disconnecting disables system proxy and TUN.
+It does not enable TUN. Workspace disconnect/logout changes only the application-owned system proxy and does not disable unrelated TUN sessions.
 
 `POST credential_endpoint` receives the same user bearer credential and
 `{"audience":"codex"}`. It must issue a **separate**, user-scoped model credential:
@@ -169,14 +195,15 @@ browser's IdP SSO cookie is not cleared. The next login may reuse that SSO sessi
 
 ## Codex configuration
 
-Synchronization adds only `model_providers.pilgrim` and `profiles.pilgrim` to the
-user's `config.toml`, preserving other settings and comments. A conflicting
-provider/profile is rejected. The first previous file is saved as
+Synchronization adds only `model_providers.pilgrim` to the user's `config.toml`,
+preserving other settings, profiles and comments. It does not create a profile
+file. A conflicting provider is rejected. The first previous file is saved as
 `config.before-workspace.toml`; writes are atomic and companion updates serialize.
-The default model/provider is not changed. Start with:
+The default model/provider is not changed. Select the company provider and a
+model approved by the deployment policy, for example:
 
 ```sh
-codex --profile pilgrim
+codex -c 'model_provider="pilgrim"' --model <approved-model>
 ```
 
 The provider uses a command-backed bearer-token helper. The deployed Codex must
@@ -188,9 +215,68 @@ works. Never test with an existing personal `CODEX_HOME` when running local smok
 
 ## Release boundary
 
-The first candidate uses a separately installed companion executable, not a
-bundled Python runtime. Before desktop distribution, package and sign the
-companion, isolate privileged-service/package identifiers, provide a signed
-company update channel and validate installation/startup/logout on each supported
-OS. Do not install the upstream service or publish this smoke build as a finished
-company desktop release.
+The macOS app bundle, main executable, application data, development control
+record and sidecar socket use the Pilgrim Workspace identity. This smoke build
+still uses upstream core execution coordination and does **not** support
+concurrent mihomo/VPN clients or shared system-proxy ownership. Before any native
+setup, macOS startup refuses a running official app, active upstream core or enabled system proxy and
+asks the user to quit the third-party VPN/proxy. It never stops that client.
+Local proxy cleanup preserves a proxy that this process did not enable or that
+another client replaced. Test with `dev-sidecar`; do not install or operate the
+upstream privileged service. Privileged service operations are disabled in every build, including development
+service commands. All development modes use sidecar; there is no separate
+privileged service to install. A distinct bundle identifier does not make
+simultaneous VPN routing safe.
+
+Personal remote development machines are a separate capability. Company mode
+retrieves the signed-in employee's authorized hosts using the opaque access token,
+checks the binding and revision, and displays network requirements and approved
+directories. An explicit preparation/check downloads a managed Ed25519 credential
+or matches an existing approved local public key/ssh-agent identity. Native code
+verifies the private key fingerprint and installs it atomically with 0600
+permissions in the dedicated 0700 SSH directory. Changed files, host pins and
+identities stop the operation without overwriting them. No key enters WebView,
+logs, command arguments or a remote model configuration.
+
+The manager prepends a managed Include while preserving existing SSH config bytes
+and keeps concrete stable aliases, strict known_hosts and fixed local directives
+in separate fragments. OpenSSH resolution is checked through the personal config.
+Hosts requiring the company proxy use the application's verified local SOCKS port;
+Tailscale assignments require the existing Tailscale network. No proxy/TUN client
+is installed or silently stopped.
+
+Logout cancels pending application SSH operations and clears/revokes the Passport
+session; installed SSH keys and entries remain. It does not terminate unrelated
+connections or revoke SSH authorization. Upstream offboarding is an administrator
+responsibility. Mobile templates and private mobile delivery are untouched.
+
+Companion bundling has been exercised on Intel macOS, but a locally built/ad-hoc
+signed runtime is not a signed/notarized release. Package installation, actual
+company network access, real employee login and Desktop project acceptance remain
+separate evidence requirements.
+
+
+## Current access-service integration boundary
+
+The contract is exercised by `companion/tests/test_workspace_access.py` through
+production companion HTTP calls against synthetic fixtures with isolated XDG,
+SSH and CODEX_HOME state. It covers independent capabilities, same-origin/version
+checks, credential binding/revision validation, incorrect key rejection, member
+isolation, 0600 permissions, idempotence, conflicts and stable error codes. Existing
+SSH tests also use a real temporary loopback sshd. These tests do not establish
+live employee or Desktop acceptance.
+
+Network download is explicit on connect/update, bounded to 2 MB and validated by
+the actual bundled mihomo before import. Updates publish a new profile instead
+of overwriting the previous valid file. Selection/proxy failures preserve the
+previous selection where rollback is possible. Status reports system-proxy
+activation separately from unverified target reachability. macOS retains the
+pre-takeover proxy dictionaries in memory and restores only services whose settings
+still exactly match this process's applied state. A refused restoration is reported;
+cleanup attempts to avoid leaving an owned proxy pointing at a stopped core.
+
+The supported Desktop route is Settings → Connections, add/enable the concrete
+SSH alias, then select the remote folder. There is no verified public automatic
+project-add API in this client. An SSH check does not mark a Desktop project as
+opened or a remote task as completed. See the
+[official remote connection instructions](https://learn.chatgpt.com/docs/remote-connections).

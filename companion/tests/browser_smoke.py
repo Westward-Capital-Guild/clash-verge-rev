@@ -84,10 +84,13 @@ def main():
                 if self.headers.get("Authorization") != "Bearer " + capability:
                     self.send_error(403)
                     return
-                action = json.loads(
-                    self.rfile.read(int(self.headers["Content-Length"]))
-                )["action"]
+                payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                action = payload["action"]
                 action = action.replace("_", "-")
+                if action.startswith("remote-"):
+                    value = agent.remote(action.removeprefix("remote-"), payload.get("hostId"), payload.get("workspaceId"))
+                    self.respond(200, value)
+                    return
                 if action not in (
                     "status",
                     "login-authentik",
@@ -142,7 +145,11 @@ def main():
                         time.sleep(0.25)
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.launch(
-                        executable_path="/usr/bin/chromium", args=["--no-sandbox"]
+                        executable_path=os.environ.get(
+                            "WORKSPACE_SMOKE_BROWSER",
+                            "/usr/bin/chromium" if sys.platform == "linux" else None,
+                        ),
+                        args=["--no-sandbox"],
                     )
                     page = browser.new_page(viewport={"width": 1100, "height": 820})
                     page.add_init_script(
@@ -159,8 +166,8 @@ def main():
                     page.goto(url)
                     page.get_by_role("button", name="企业 SSO 登录", exact=True).click()
                     page.get_by_role("heading", name="Smoke User").wait_for()
-                    page.get_by_role("button", name="同步 Codex 配置").click()
-                    page.get_by_text("Codex 已配置", exact=True).wait_for()
+                    page.get_by_role("button", name="配置本机模型").click()
+                    page.get_by_text("本机模型已配置", exact=True).wait_for()
                     page.screenshot(
                         path=str(screenshot_dir / "workbench-desktop.png"),
                         full_page=True,
@@ -179,7 +186,7 @@ def main():
                         "Array.from(document.querySelectorAll('button')).every(e => parseFloat(getComputedStyle(e).fontSize) >= 14 && e.getBoundingClientRect().height >= 44)"
                     )
                     provider.fail_policy = True
-                    page.get_by_role("button", name="同步 Codex 配置").click()
+                    page.get_by_role("button", name="配置本机模型").click()
                     page.get_by_role("alert").wait_for()
                     page.get_by_role("button", name="退出登录并断开").click()
                     page.get_by_role(
@@ -190,8 +197,8 @@ def main():
                     page.get_by_role("button", name="飞书登录", exact=True).click()
                     page.get_by_role("heading", name="Smoke User").wait_for()
                     assert agent.store.get()["provider"] == "feishu"
-                    page.get_by_role("button", name="同步 Codex 配置").click()
-                    page.get_by_text("Codex 已配置", exact=True).wait_for()
+                    page.get_by_role("button", name="配置本机模型").click()
+                    page.get_by_text("本机模型已配置", exact=True).wait_for()
                     page.get_by_role("button", name="退出登录并断开").click()
                     page.get_by_role("button", name="飞书登录", exact=True).wait_for()
                     assert agent.store.get() is None
@@ -199,6 +206,81 @@ def main():
                     page.screenshot(
                         path=str(screenshot_dir / "login-providers.png"), full_page=True
                     )
+                    provider.cancel = True
+                    page.get_by_role("button", name="飞书登录", exact=True).click()
+                    page.get_by_role("alert").wait_for()
+                    assert agent.store.get() is None
+                    page.screenshot(
+                        path=str(screenshot_dir / "login-cancelled.png"), full_page=True
+                    )
+                    provider.cancel = False
+                    page.get_by_role("button", name="飞书登录", exact=True).click()
+                    page.get_by_role("heading", name="Smoke User").wait_for()
+                    agent.store.value["token"]["expires_at"] = 1
+                    page.get_by_role("button", name="检查状态", exact=True).click()
+                    page.get_by_text("登录已过期", exact=False).wait_for()
+                    assert page.get_by_role("button", name="配置本机模型").is_disabled()
+                    page.screenshot(
+                        path=str(screenshot_dir / "session-expired.png"), full_page=True
+                    )
+                    page.get_by_role("button", name="退出登录并断开").click()
+                    page.get_by_role("button", name="飞书登录", exact=True).wait_for()
+                    assert agent.store.get() is None
+                    page.get_by_role("button", name="飞书登录", exact=True).click()
+                    page.get_by_role("heading", name="Smoke User").wait_for()
+                    agent.remote_authority = lambda _: [{
+                        "id": "synthetic-host", "display_name": "Synthetic development host",
+                        "connection": {"network_requirement": "direct"},
+                        "workspaces": [{"id": "synthetic-project", "display_name": "Synthetic project", "path": "/workspace/synthetic"}],
+                    }]
+                    class SyntheticSSH:
+                        def check(self, record, workspace_id):
+                            return {"state": "ssh_ready", "alias": "pilgrim-synthetic", "path": "/workspace/synthetic"}
+                    agent.remote_ssh = SyntheticSSH()
+                    page.get_by_role("button", name="刷新开发机").click()
+                    page.get_by_role("heading", name="Synthetic development host").wait_for()
+                    page.get_by_role("button", name="检查连接").click()
+                    page.get_by_text("尚未添加 Codex Desktop 项目", exact=False).wait_for()
+                    page.get_by_text("在 Codex Desktop 设置", exact=False).wait_for()
+                    page.screenshot(path=str(screenshot_dir / "remote-synthetic.png"), full_page=True)
+                    page.get_by_role("button", name="退出登录并断开").click()
+                    page.get_by_role("button", name="飞书登录", exact=True).wait_for()
+                    assert page.get_by_role("heading", name="Synthetic development host").count() == 0
+                    agent.remote_authority = None
+                    agent.config = None
+                    agent.providers = {}
+                    page.get_by_role("button", name="检查状态", exact=True).click()
+                    page.get_by_text("无需手动填写配置", exact=False).wait_for()
+                    assert page.get_by_role("button", name="飞书登录", exact=True).is_disabled()
+                    assert page.get_by_role("button", name="企业 SSO 登录", exact=True).count() == 0
+                    page.screenshot(
+                        path=str(screenshot_dir / "unconfigured.png"), full_page=True
+                    )
+                    import pytest
+                    from test_workspace_access import service
+                    with pytest.MonkeyPatch.context() as patch:
+                        fixture_run = service.__wrapped__(temporary / "company", patch)
+                        fixture, agent = next(fixture_run)
+                        try:
+                            page.get_by_role("button", name="检查状态", exact=True).click()
+                            page.get_by_role("heading", name="Fixture A", exact=True).wait_for()
+                            page.get_by_role("heading", name="Synthetic host", exact=True).wait_for()
+                            assert page.get_by_role("button", name="配置本机模型", exact=True).count() == 0
+                            page.get_by_role("button", name="准备 SSH", exact=True).click()
+                            page.get_by_text("SSH 配置已准备，尚未验证连接。", exact=True).wait_for()
+                            assert "PRIVATE KEY" not in page.locator("body").inner_text()
+                            page.screenshot(path=str(screenshot_dir / "company-managed-key-synthetic.png"), full_page=True)
+                            fixture["network"] = "not_granted"
+                            page.get_by_role("button", name="检查状态", exact=True).click()
+                            page.get_by_role("button", name="连接公司网络", exact=True).wait_for()
+                            page.wait_for_function("document.querySelectorAll('button').length > 0 && Array.from(document.querySelectorAll('button')).some(b => b.textContent === '连接公司网络' && b.disabled)")
+                            assert page.get_by_role("heading", name="Synthetic host", exact=True).count() == 1
+                            agent.store.clear()
+                            page.get_by_role("button", name="检查状态", exact=True).click()
+                            page.get_by_role("button", name="飞书登录", exact=True).wait_for()
+                            assert page.get_by_role("button", name="企业 SSO 登录", exact=True).count() == 0
+                        finally:
+                            fixture_run.close()
                     assert not errors, errors
                     browser.close()
                 print(
@@ -209,8 +291,12 @@ def main():
                                 "Authentik and Feishu OIDC login",
                                 "Codex configuration",
                                 "policy failure",
+                                "login cancellation",
+                                "expired session",
                                 "logout",
                                 "390px layout",
+                                "unconfigured company integration",
+                                "synthetic remote UI distinguishes SSH from Desktop project acceptance",
                             ],
                             "screenshots": str(screenshot_dir),
                             "excluded": [

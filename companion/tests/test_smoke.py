@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import json
+import platform
 from pathlib import Path
 import socket
 import subprocess
@@ -260,7 +261,8 @@ def test_sign_in_configure_refresh_model_and_logout(environment):
     assert "# Personal settings" in configured
     assert parsed["model"] == "personal-model"
     assert parsed["projects"]["/work"]["trust_level"] == "trusted"
-    assert parsed["profiles"]["pilgrim"]["model_provider"] == "pilgrim"
+    assert "profiles" not in parsed
+    assert not target.with_name("pilgrim.config.toml").exists()
     assert "smoke-access" not in configured and "smoke-refresh" not in configured
     assert target.with_name("config.before-workspace.toml").read_text() == original
     agent.run("configure")
@@ -289,6 +291,21 @@ def test_sign_in_configure_refresh_model_and_logout(environment):
     assert store.get() is None
     with pytest.raises(AgentError, match="SIGN_IN_REQUIRED"):
         agent.run("token")
+
+
+def test_configure_preserves_existing_profiles(environment):
+    agent, _, _ = environment
+    agent.run("login")
+    target = agent.codex_path()
+    target.parent.mkdir()
+    original = '[profiles.pilgrim]\nmodel_provider = "personal"\nmodel = "personal-model"\n'
+    target.write_text(original)
+    profile_path = target.with_name("pilgrim.config.toml")
+    profile_original = '# User profile\nmodel = "another-personal-model"\n'
+    profile_path.write_text(profile_original)
+    assert agent.run("configure")["codex"]
+    assert tomlkit.parse(target.read_text())["profiles"]["pilgrim"]["model_provider"] == "personal"
+    assert profile_path.read_text() == profile_original
 
 
 @pytest.mark.parametrize(
@@ -385,12 +402,19 @@ def test_insecure_remote_issuer_rejected(tmp_path):
 
 def test_provisioned_profile_forwards_through_real_mihomo(environment, tmp_path):
     agent, provider, _ = environment
+    host = {
+        ("Linux", "x86_64"): "x86_64-unknown-linux-gnu",
+        ("Darwin", "x86_64"): "x86_64-apple-darwin",
+        ("Darwin", "arm64"): "aarch64-apple-darwin",
+    }.get((platform.system(), platform.machine()))
+    if host is None:
+        pytest.skip("Real core smoke is unavailable for this host")
     binary = (
         Path(__file__).resolve().parents[2]
-        / "src-tauri/sidecar/verge-mihomo-x86_64-unknown-linux-gnu"
+        / f"src-tauri/sidecar/verge-mihomo-{host}"
     )
     if not binary.exists():
-        pytest.skip("Run pnpm prebuild on Linux x86_64 for the real core smoke")
+        pytest.skip("Run pnpm prebuild for the real core smoke")
     agent.run("login")
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -421,11 +445,16 @@ def test_provisioned_profile_forwards_through_real_mihomo(environment, tmp_path)
                     time.sleep(0.1)
             with requests.Session() as client:
                 client.trust_env = False
-                response = client.get(
-                    provider.issuer + ".well-known/openid-configuration",
-                    proxies={"http": f"http://127.0.0.1:{port}"},
-                    timeout=10,
-                )
+                # The core binds its listener before initializing its proxy providers.
+                for _ in range(50):
+                    response = client.get(
+                        provider.issuer + ".well-known/openid-configuration",
+                        proxies={"http": f"http://127.0.0.1:{port}"},
+                        timeout=10,
+                    )
+                    if response.status_code == 200:
+                        break
+                    time.sleep(0.1)
             assert response.status_code == 200
             assert response.json()["issuer"] == provider.issuer
         finally:
@@ -470,8 +499,10 @@ def test_two_providers_keep_sessions_and_gateways_separate(tmp_path, monkeypatch
         with pytest.raises(AgentError, match="SIGN_OUT_FIRST"):
             agent.run("login-authentik")
         store.value["token"]["expires_at"] = 1
+        store.value["token"]["refresh_token"] = "unexpected-feishu-refresh"
         with pytest.raises(AgentError, match="SESSION_EXPIRED"):
             agent.run("token-feishu")
+        store.value["token"].pop("refresh_token")
         assert feishu.refresh_count == 0
         assert agent.run("logout")["remote_revoked"]
         assert len(feishu.revoked) == 1 and not authentik.revoked

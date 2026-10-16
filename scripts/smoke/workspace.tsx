@@ -11,6 +11,18 @@ const { endpoint, capability } = (
 ).__WORKSPACE_SMOKE__
 
 const client: WorkspaceClient = {
+  async remote(action, hostId, workspaceId) {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${capability}`,
+      },
+      body: JSON.stringify({ action: `remote-${action}`, hostId, workspaceId }),
+    })
+    if (!response.ok) throw new Error('Smoke operation failed')
+    return response.json()
+  },
   async run(action) {
     const response = await fetch(endpoint, {
       method: 'POST',

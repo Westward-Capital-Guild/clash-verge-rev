@@ -58,7 +58,7 @@ def main():
                 bus.wait(timeout=5)
                 raise RuntimeError("Isolated DBus session failed")
             process = subprocess.Popen(
-                [str(root / "target/debug/clash-verge")],
+                [str(root / "target/debug/pilgrim-workspace")],
                 cwd=root,
                 env=env,
                 stdout=log,
@@ -81,7 +81,7 @@ def main():
                     time.sleep(0.5)
                 if not found:
                     raise RuntimeError("Workspace window was not created")
-                core_socket = app_data / "verge-mihomo.sock"
+                core_socket = app_data / "pilgrim-mihomo.sock"
                 core_ready = False
                 for _ in range(60):
                     try:

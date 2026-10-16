@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "identifier": "com.pilgrimss.workspace",
-  "productName": "Clash Verge",
+  "productName": "Pilgrim Workspace",
   "bundle": {
     "targets": ["app", "dmg"],
     "macOS": {

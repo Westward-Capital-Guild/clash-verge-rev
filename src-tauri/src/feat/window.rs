@@ -165,6 +165,7 @@ pub async fn quit() {
             NoticeStatus::AppQuitCoreStopFailed,
             cleanup_result.stop_error.unwrap_or_default(),
         );
+        return;
     }
 
     utils::server::shutdown_embedded_server();
@@ -173,6 +174,7 @@ pub async fn quit() {
 }
 
 pub async fn clean_async() -> CleanupResult {
+    crate::cmd::workspace::cancel_workspace_companions().await;
     let stop_error = Mutex::new(None);
     let mut result = run_interactive_cleanup_transition(
         || async {
@@ -250,6 +252,7 @@ where
 }
 
 async fn clean_session_ending_best_effort() -> CleanupResult {
+    crate::cmd::workspace::cancel_workspace_companions().await;
     logging!(
         info,
         Type::System,

@@ -519,3 +519,11 @@ export function workspaceAction(
 ): Promise<WorkspaceStatus> {
   return commands.workspaceAction(action)
 }
+
+export function workspaceRemote(
+  action: import('./workspace-contract').WorkspaceRemoteAction,
+  hostId?: string,
+  workspaceId?: string,
+): Promise<import('./workspace-contract').WorkspaceRemoteStatus> {
+  return commands.workspaceRemote(action, hostId ?? null, workspaceId ?? null)
+}

@@ -22,13 +22,17 @@ import requests
 import tomlkit
 
 
+from remote_ssh import RemoteError, RemoteSSH, public_hosts
+from workspace_access import AccessError, WorkspaceAccess
+
+
 class AgentError(Exception):
     pass
 
 
 def secure_url(value):
     url = urlsplit(value)
-    if url.username or url.password or url.fragment:
+    if url.username is not None or url.password is not None or url.fragment:
         raise AgentError("INVALID_ENDPOINT")
     if url.scheme != "https" and not (
         url.scheme == "http" and url.hostname in ("127.0.0.1", "::1")
@@ -85,10 +89,26 @@ class CredentialStore:
 
 class Agent:
     def __init__(
-        self, config_path, *, store=None, browser=webbrowser.open, helper=None
+        self, config_path, *, store=None, browser=webbrowser.open, helper=None,
+        remote_authority=None, remote_ssh=None, bootstrap_url=None, allow_loopback=False
     ):
+        self.remote_authority = remote_authority
+        proxy_port = os.environ.get("PILGRIM_WORKSPACE_SOCKS_PORT", "")
+        self.remote_ssh = remote_ssh or RemoteSSH(proxy_port=int(proxy_port) if proxy_port.isdigit() else None)
         self.path = Path(config_path).expanduser().resolve()
-        self.config = json.loads(self.path.read_text()) if self.path.exists() else None
+        self.access = None
+        self.bootstrap_error = None
+        if bootstrap_url:
+            self.path = Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "pilgrim-workspace/session"
+            self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            self.access = WorkspaceAccess(bootstrap_url, allow_loopback=allow_loopback)
+            try:
+                self.config = self.access.load()
+            except AccessError as error:
+                self.config = None
+                self.bootstrap_error = str(error)
+        else:
+            self.config = json.loads(self.path.read_text()) if self.path.exists() else None
         self.browser = browser
         self.helper = str(Path(helper or sys.argv[0]).resolve())
         self.metadata = None
@@ -105,12 +125,12 @@ class Agent:
             if not self.providers or set(self.providers) - {"feishu", "authentik"}:
                 raise AgentError("INVALID_PROVIDERS")
             for provider in self.providers.values():
-                for field in ("issuer", "policy_endpoint", "credential_endpoint"):
+                for field in (("issuer", "policy_endpoint") if self.access else ("issuer", "policy_endpoint", "credential_endpoint")):
                     secure_url(provider[field])
                 if not provider.get("client_id"):
                     raise AgentError("CLIENT_ID_REQUIRED")
         account = hashlib.sha256(
-            (str(self.path) + json.dumps(self.config, sort_keys=True)).encode()
+            (bootstrap_url if self.access else str(self.path) + json.dumps(self.config, sort_keys=True)).encode()
         ).hexdigest()
         self.store = store or CredentialStore(account)
 
@@ -131,12 +151,20 @@ class Agent:
                 timeout=15,
                 allow_redirects=False,
             )
-            response.raise_for_status()
+            if not 200 <= response.status_code < 300:
+                raise AgentError("DISCOVERY_UNAVAILABLE")
             self.metadata = response.json()
             if self.metadata.get("issuer") != issuer:
                 raise AgentError("ISSUER_MISMATCH")
-            for field in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
-                secure_url(self.metadata[field])
+            for field in ("authorization_endpoint", "token_endpoint", "jwks_uri", "revocation_endpoint"):
+                if field not in self.metadata and field == "revocation_endpoint" and not self.access:
+                    continue
+                if self.access:
+                    self.access.url(self.metadata[field])
+                else:
+                    secure_url(self.metadata[field])
+            if self.access and "none" not in self.metadata.get("token_endpoint_auth_methods_supported", []):
+                raise AgentError("PUBLIC_CLIENT_REQUIRED")
             if "S256" not in self.metadata.get("code_challenge_methods_supported", []):
                 raise AgentError("PKCE_NOT_SUPPORTED")
         return self.metadata
@@ -144,7 +172,8 @@ class Agent:
     def validate_identity(self, token, *, nonce=None, subject=None):
         meta = self.discover()
         response = requests.get(meta["jwks_uri"], timeout=15, allow_redirects=False)
-        response.raise_for_status()
+        if not 200 <= response.status_code < 300:
+            raise AgentError("JWKS_UNAVAILABLE")
         claims = JsonWebToken(["RS256", "ES256"]).decode(
             token["id_token"],
             response.json(),
@@ -258,7 +287,8 @@ class Agent:
                 )
         identity = self.validate_identity(token, nonce=nonce)
         self.store.set(
-            {"provider": provider, "token": dict(token), "identity": identity}
+            {"provider": provider, "session_id": nonce, "token": dict(token), "identity": identity,
+             "client": [self.provider()["issuer"], self.provider()["client_id"]]}
         )
         return self.status()
 
@@ -266,9 +296,11 @@ class Agent:
         session = self.store.get()
         if not session:
             raise AgentError("SIGN_IN_REQUIRED")
+        if self.access and session.get("client") != [self.provider()["issuer"], self.provider()["client_id"]]:
+            raise AgentError("INVALID_SESSION")
         token = session["token"]
         if token.get("expires_at", 0) <= time.time() + 30:
-            if not token.get("refresh_token"):
+            if session.get("provider") == "feishu" or not token.get("refresh_token"):
                 raise AgentError("SESSION_EXPIRED")
             with self.client(token=token) as client:
                 refreshed = dict(
@@ -298,6 +330,8 @@ class Agent:
                 "codex": False,
                 "providers": [],
                 "provider": None,
+                "company": self.access is not None,
+                "code": self.bootstrap_error,
             }
         session = self.store.get()
         state = "signed_out" if not session else "signed_in"
@@ -310,16 +344,20 @@ class Agent:
             auth = (
                 document.get("model_providers", {}).get("pilgrim", {}).get("auth", {})
             )
-            profile = document.get("profiles", {}).get("pilgrim", {})
             configured = (
                 auth.get("command") == self.helper
                 and session is not None
                 and auth.get("args")
                 == self.token_args(session.get("provider", "authentik"))
-                and profile.get("model_provider") == "pilgrim"
-                and bool(profile.get("model"))
             )
+        extra = {"company": self.access is not None}
+        if self.access and state == "signed_in":
+            try:
+                extra["capabilities"] = self.policy()["capabilities"]
+            except (AgentError, AccessError) as error:
+                extra["code"] = str(error)
         return {
+            **extra,
             "providers": list(self.providers),
             "provider": session.get("provider", "authentik") if session else None,
             "state": state,
@@ -328,6 +366,8 @@ class Agent:
         }
 
     def policy(self):
+        if self.access:
+            return self.access.policy(self.access_token())
         response = requests.get(
             self.provider()["policy_endpoint"],
             headers={"Authorization": "Bearer " + self.access_token()},
@@ -353,6 +393,8 @@ class Agent:
         )
 
     def configure(self):
+        if self.access:
+            raise AgentError("LOCAL_MODEL_NOT_GRANTED")
         policy = self.policy()
         target = self.codex_path()
         target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -360,7 +402,6 @@ class Agent:
             original = target.read_text() if target.exists() else ""
             doc = tomlkit.parse(original)
             providers = doc.setdefault("model_providers", tomlkit.table())
-            profiles = doc.setdefault("profiles", tomlkit.table())
             existing = providers.get("pilgrim")
             expected_args = self.token_args(
                 self.store.get().get("provider", "authentik")
@@ -372,11 +413,6 @@ class Agent:
                 or existing.get("auth", {}).get("args") not in owned_args
             ):
                 raise AgentError("CODEX_PROVIDER_CONFLICT")
-            if (
-                "pilgrim" in profiles
-                and profiles["pilgrim"].get("model_provider") != "pilgrim"
-            ):
-                raise AgentError("CODEX_PROFILE_CONFLICT")
             desired = {
                 "name": "Company gateway",
                 "base_url": policy["codex"]["base_url"],
@@ -390,9 +426,6 @@ class Agent:
             }
             if existing != desired:
                 providers["pilgrim"] = desired
-            profile = profiles.setdefault("pilgrim", tomlkit.table())
-            profile["model_provider"] = "pilgrim"
-            profile["model"] = policy["codex"]["model"]
             rendered = tomlkit.dumps(doc)
             if rendered == original:
                 return self.status()
@@ -405,6 +438,8 @@ class Agent:
         return self.status()
 
     def token(self):
+        if self.access:
+            raise AgentError("LOCAL_MODEL_NOT_GRANTED")
         response = requests.post(
             self.provider()["credential_endpoint"],
             json={"audience": "codex"},
@@ -426,6 +461,11 @@ class Agent:
 
     def network_profile(self):
         policy = self.policy()
+        if self.access:
+            if policy["capabilities"]["network"] != "granted":
+                raise AgentError("NETWORK_NOT_GRANTED")
+            return {"yaml": self.access.request(policy["network"]["profile_endpoint"], self.access_token(), yaml=True),
+                    "binding_id": policy["binding_id"], "revision": policy["revision"]}
         url = secure_url(policy["network"]["profile_endpoint"])
         # Do not forward an identity credential to an arbitrary policy URL.
         if (urlsplit(url).scheme, urlsplit(url).netloc) != (
@@ -477,11 +517,70 @@ class Agent:
             self.metadata = None
         return {**self.status(), "remote_revoked": revoked}
 
+    def session_binding(self):
+        session = self.store.get()
+        if not session:
+            return None
+        identity = session.get("identity", {})
+        return (session.get("provider"), identity.get("sub"), session.get("session_id"))
+
+    def remote(self, action, host_id=None, workspace_id=None):
+        # Bootstrap/access-service delivery owns this adapter; no employee JSON wiring.
+        if self.remote_authority is None and self.access is None:
+            return {"state": "unconfigured", "hosts": []}
+        try:
+            with FileLock(str(self.path) + ".lock", timeout=1):
+                if not self.store.get():
+                    return {"state": "signed_out", "hosts": []}
+                token = self.access_token()
+                session = self.session_binding()
+            if self.access:
+                policy = self.access.policy(token)
+                records = self.access.hosts(token, policy)
+            else:
+                records = self.remote_authority(token)
+            if self.session_binding() != session:
+                return {"state": "not_authorized", "hosts": []}
+            if action == "hosts":
+                return {"state": "available" if records else "unassigned", "hosts": public_hosts(records)}
+            record = next((item for item in records if item["id"] == host_id), None)
+            if record is None or not any(w["id"] == workspace_id for w in record["workspaces"]):
+                return {"state": "not_authorized", "hosts": []}
+            operation = self.remote_ssh.prepare if action == "prepare" else self.remote_ssh.check
+            if self.access and record["ssh_access_mode"] == "managed-keypair":
+                # Only an explicit preparation/check fetches the approved key.
+                credential = self.access.credential(token, record)
+                if self.session_binding() != session:
+                    return {"state": "not_authorized", "hosts": []}
+                result = operation(record, workspace_id, credential=credential)
+            else:
+                result = operation(record, workspace_id)
+            if self.session_binding() != session:
+                return {"state": "not_authorized", "hosts": []}
+            return {**result, "hosts": []}
+        except (AccessError, AgentError) as error:
+            code = str(error)
+            state = {
+                "INVALID_SESSION": "signed_out", "SIGN_IN_REQUIRED": "signed_out",
+                "SESSION_EXPIRED": "signed_out", "BINDING_CHANGED": "binding_changed",
+                "MEMBER_NOT_REGISTERED": "not_authorized", "MEMBER_BINDING_MISMATCH": "not_authorized",
+                "RESOURCE_NOT_FOUND": "not_authorized", "LOCAL_KEY_REQUIRED": "missing_key",
+                "KEY_MISMATCH": "key_mismatch", "INVALID_HOST": "invalid_host",
+            }.get(code, "unavailable")
+            return {"state": state, "code": code, "hosts": []}
+        except RemoteError as error:
+            return {"state": str(error), "hosts": []}
+        except Exception:
+            return {"state": "unavailable", "hosts": []}
+
     def run(self, action):
         if action == "status":
             return self.status()
+        if action == "logout" and self.access and not self.config:
+            self.store.clear()
+            return {**self.status(), "remote_revoked": False}
         if not self.config:
-            raise AgentError("NOT_CONFIGURED")
+            raise AgentError(self.bootstrap_error or "NOT_CONFIGURED")
         with FileLock(str(self.path) + ".lock", timeout=1):
             if action in ("token-feishu", "token-authentik"):
                 session = self.store.get()
@@ -521,11 +620,20 @@ def main():
             "token-feishu",
             "token-authentik",
             "network-profile",
+            "remote-hosts",
+            "remote-prepare",
+            "remote-check",
         ],
     )
+    parser.add_argument("--host-id")
+    parser.add_argument("--workspace-id")
     args = parser.parse_args()
     try:
-        value = Agent(args.config).run(args.action)
+        agent = Agent(args.config, bootstrap_url=os.environ.get("PILGRIM_WORKSPACE_BOOTSTRAP_URL"))
+        value = (
+            agent.remote(args.action.removeprefix("remote-"), args.host_id, args.workspace_id)
+            if args.action.startswith("remote-") else agent.run(args.action)
+        )
         print(
             value
             if args.action == "token" or args.action.startswith("token-")
@@ -535,7 +643,7 @@ def main():
         # Library errors may contain callback URLs or tokens; never emit them.
         code = (
             str(error)
-            if isinstance(error, AgentError)
+            if isinstance(error, (AgentError, AccessError))
             else "WORKSPACE_OPERATION_FAILED"
         )
         print(json.dumps({"error": code}), file=sys.stderr)

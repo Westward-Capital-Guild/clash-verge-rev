@@ -20,8 +20,7 @@ workspace adapter should be removed if upstream gains an equivalent supported
 extension mechanism; preserve private deployment configuration outside the fork.
 
 Company updates are disabled until an independently signed release channel is
-configured. Native package/service names still require release engineering before
-distribution; smoke builds must use `dev-sidecar` without installing the upstream
-privileged service. This branch is a smoke candidate, not a signed desktop release.
+configured. Privileged service operations are disabled; development uses sidecar without
+installing or operating the upstream service. Companion runtime bundling is implemented; package signing still requires release engineering before distribution. This branch is a smoke candidate, not a signed desktop release.
 
 See [the local smoke and deployment guide](docs/workspace.md).
