@@ -1,3 +1,7 @@
+## Pilgrim Workspace (unreleased)
+
+- Add an employee workbench with company sign-in, managed connectivity and Codex configuration.
+
 ## v2.5.9
 
 <details>

@@ -9,12 +9,12 @@ use std::{
 use tauri::Manager as _;
 
 #[cfg(not(feature = "verge-dev"))]
-pub static APP_ID: &str = "io.github.clash-verge-rev.clash-verge-rev";
+pub static APP_ID: &str = "com.pilgrimss.workspace";
 #[cfg(not(feature = "verge-dev"))]
 pub static BACKUP_DIR: &str = "clash-verge-rev-backup";
 
 #[cfg(feature = "verge-dev")]
-pub static APP_ID: &str = "io.github.clash-verge-rev.clash-verge-rev.dev";
+pub static APP_ID: &str = "com.pilgrimss.workspace.dev";
 #[cfg(feature = "verge-dev")]
 pub static BACKUP_DIR: &str = "clash-verge-rev-backup-dev";
 
@@ -32,7 +32,14 @@ pub fn app_home_dir() -> Result<PathBuf> {
 }
 
 pub fn preinit_app_data_dir() -> Result<PathBuf> {
-    app_home_dir()
+    let path = app_home_dir()?;
+    fs::create_dir_all(&path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(path)
 }
 
 pub fn app_resources_dir() -> Result<PathBuf> {
@@ -259,7 +266,7 @@ mod ipc_tests {
     #[test]
     fn sidecar_ipc_stays_in_the_app_root() {
         let identity = OwnerIdentity::Unix { uid: 501, gid: 20 };
-        let app_root = Path::new("/home/test/.local/share/io.github.clash-verge-rev.clash-verge-rev");
+        let app_root = Path::new("/home/test/.local/share/com.pilgrimss.workspace");
         let path = sidecar_ipc_path_for(app_root, &identity);
 
         assert_eq!(path, app_root.join("verge-mihomo.sock"));
@@ -279,8 +286,7 @@ mod ipc_tests {
     #[test]
     fn sidecar_ipc_ignores_long_app_root_and_fits_sockaddr_un() -> anyhow::Result<()> {
         let identity = OwnerIdentity::Unix { uid: 501, gid: 20 };
-        let app_root =
-            Path::new("/Users/support/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev.dev");
+        let app_root = Path::new("/Users/support/Library/Application Support/com.pilgrimss.workspace.dev");
         let path = sidecar_ipc_path_for(app_root, &identity)?;
 
         assert!(!path.starts_with(app_root));

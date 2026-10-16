@@ -2,6 +2,8 @@ import { DragDropProvider, KeyboardSensor, PointerSensor } from '@dnd-kit/react'
 import { Box, List, Menu, MenuItem, SvgIcon } from '@mui/material'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Link, NavLink, useLocation } from 'react-router'
+import '@/components/workspace/workspace.css'
 
 import iconDark from '@/assets/image/icon_dark.svg?react'
 import iconLight from '@/assets/image/icon_light.svg?react'
@@ -26,6 +28,32 @@ interface LayoutSidebarProps {
 const SENSORS = [PointerSensor, KeyboardSensor]
 
 export const LayoutSidebar = (props: LayoutSidebarProps) => {
+  const { pathname } = useLocation()
+  if (!['/', '/development', '/workspace-settings'].includes(pathname)) {
+    return (
+      <div>
+        <NavLink to="/" style={{ display: 'block', padding: 16 }}>
+          返回工作台
+        </NavLink>
+        <AdvancedSidebar {...props} />
+      </div>
+    )
+  }
+  return (
+    <nav className="workspace-navigation" aria-label="工作环境导航">
+      <Link className="workspace-brand" to="/">
+        Pilgrim Workspace
+      </Link>
+      <NavLink to="/" end>
+        工作台
+      </NavLink>
+      <NavLink to="/development">开发环境</NavLink>
+      <NavLink to="/workspace-settings">设置</NavLink>
+    </nav>
+  )
+}
+
+const AdvancedSidebar = (props: LayoutSidebarProps) => {
   const { isDark, isCollapsed } = props
   const { t } = useTranslation()
   const { verge, mutateVerge, patchVerge } = useVerge()

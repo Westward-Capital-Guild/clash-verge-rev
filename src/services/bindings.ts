@@ -4,6 +4,8 @@ import { invoke as __TAURI_INVOKE, Channel } from '@tauri-apps/api/core'
 
 /** Commands */
 export const commands = {
+  workspaceAction: (action: WorkspaceAction) =>
+    __TAURI_INVOKE<WorkspaceStatus>('workspace_action', { action }),
   getSystemInfo: () => __TAURI_INVOKE<SystemInfo>('get_system_info'),
   /**  获取应用的运行时间（毫秒） */
   getAppUptime: () => __TAURI_INVOKE<number>('get_app_uptime'),
@@ -1051,6 +1053,28 @@ export type VergeEventPayloads = {
 export type WebDavFile = {
   href: string
   last_modified: string
+}
+
+export type WorkspaceAction =
+  | 'status'
+  | 'login'
+  | 'configure'
+  | 'connect'
+  | 'disconnect'
+  | 'logout'
+
+export type WorkspaceState =
+  | 'unconfigured'
+  | 'signed_out'
+  | 'signed_in'
+  | 'expired'
+
+export type WorkspaceStatus = {
+  state: WorkspaceState
+  name: string | null
+  codex: boolean
+  network_enabled?: boolean
+  remote_revoked?: boolean | null
 }
 
 export type YamlMapping = { [key in string]: JsonValue }
