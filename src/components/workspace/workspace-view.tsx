@@ -72,6 +72,11 @@ export const WorkspaceView = ({
   }, [run])
 
   const signedIn = status?.state === 'signed_in'
+  const networkUnassigned =
+    status?.company &&
+    signedIn &&
+    (status.code === 'MEMBER_NOT_REGISTERED' ||
+      status.capabilities?.network === 'not_granted')
   const action = (value: WorkspaceAction) => () => {
     void run(value)
   }
@@ -178,14 +183,16 @@ export const WorkspaceView = ({
                 {status
                   ? status.network_enabled
                     ? '系统连接已启用'
-                    : '未连接'
+                    : networkUnassigned
+                      ? '尚未分配'
+                      : '未连接'
                   : '状态待确认'}
               </span>
               {status?.network_stage && (
                 <p role="status">{networkStages[status.network_stage]}</p>
               )}
               <p>
-                按企业授权下载、校验并导入个人网络配置。系统代理启用后，仍需检查目标工作服务是否可达。
+                下载、校验并导入分配给你的个人网络配置。系统代理启用后，仍需检查目标工作服务是否可达。
               </p>
               <button
                 disabled={

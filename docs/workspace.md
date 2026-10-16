@@ -20,9 +20,15 @@ private build environment files. An uninjected build honestly shows unavailable
 company access. Developer-only legacy JSON below remains available for reusable
 OIDC regression tests, not employee onboarding.
 
-A public bootstrap response does not establish employee authorization or real
-business acceptance. Those require a real Feishu login and resources explicitly
-bound to that employee by the administrator.
+A public bootstrap response does not establish employee identity, resource
+ownership or real business acceptance. Authentication requires a real Feishu
+login; resource delivery requires references bound to the correct employee.
+
+Company Feishu members may sign in without separate Workspace approval. Resource
+assignment is independent of sign-in: an employee with no delivery record remains
+signed in and sees unassigned resources. The current service's
+`MEMBER_NOT_REGISTERED` delivery response retains its diagnostic code but is shown
+as unassigned, not as a request to register or obtain permission to sign in.
 
 ## Local smoke
 

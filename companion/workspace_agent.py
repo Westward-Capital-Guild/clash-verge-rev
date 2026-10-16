@@ -536,7 +536,10 @@ class Agent:
                 session = self.session_binding()
             if self.access:
                 policy = self.access.policy(token)
-                records = self.access.hosts(token, policy)
+                if action == "hosts" and policy["capabilities"]["development_hosts"] == "not_granted":
+                    records = []
+                else:
+                    records = self.access.hosts(token, policy)
             else:
                 records = self.remote_authority(token)
             if self.session_binding() != session:
@@ -563,7 +566,7 @@ class Agent:
             state = {
                 "INVALID_SESSION": "signed_out", "SIGN_IN_REQUIRED": "signed_out",
                 "SESSION_EXPIRED": "signed_out", "BINDING_CHANGED": "binding_changed",
-                "MEMBER_NOT_REGISTERED": "not_authorized", "MEMBER_BINDING_MISMATCH": "not_authorized",
+                "MEMBER_NOT_REGISTERED": "unassigned", "MEMBER_BINDING_MISMATCH": "not_authorized",
                 "RESOURCE_NOT_FOUND": "not_authorized", "LOCAL_KEY_REQUIRED": "missing_key",
                 "KEY_MISMATCH": "key_mismatch", "INVALID_HOST": "invalid_host",
             }.get(code, "unavailable")

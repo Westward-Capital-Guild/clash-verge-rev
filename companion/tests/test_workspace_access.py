@@ -105,18 +105,19 @@ def service(tmp_path, monkeypatch):
         thread.join()
 
 
-@pytest.mark.parametrize("network,hosts", [("granted", "not_granted"), ("not_granted", "granted"), ("granted", "granted")])
+@pytest.mark.parametrize("network,hosts", [("granted", "not_granted"), ("not_granted", "granted"), ("granted", "granted"), ("not_granted", "not_granted")])
 def test_independent_capabilities_and_no_model_dependency(service, network, hosts):
     fixture, agent = service
     fixture.update(network=network, development_hosts=hosts)
     assert agent.status()["capabilities"]["network"] == network
+    assert agent.status()["state"] == "signed_in"
     assert agent.status()["providers"] == ["feishu"]
     if network == "granted":
         assert "yaml" in agent.run("network-profile")
     else:
         with pytest.raises(AgentError, match="NETWORK_NOT_GRANTED"):
             agent.run("network-profile")
-    assert agent.remote("hosts")["state"] == ("available" if hosts == "granted" else "not_authorized")
+    assert agent.remote("hosts")["state"] == ("available" if hosts == "granted" else "unassigned")
     with pytest.raises(AgentError, match="LOCAL_MODEL_NOT_GRANTED"):
         agent.run("configure")
     assert not agent.codex_path().exists()
@@ -157,12 +158,17 @@ def test_binding_revision_key_and_member_isolation(service):
     assert agent.remote("hosts")["code"] == "INVALID_SESSION"
 
 
-@pytest.mark.parametrize("status,code,state", [(403, "MEMBER_BINDING_MISMATCH", "not_authorized"), (503, "WORKSPACE_UNAVAILABLE", "unavailable"), (409, "BINDING_CHANGED", "binding_changed")])
+@pytest.mark.parametrize("status,code,state", [(403, "MEMBER_NOT_REGISTERED", "unassigned"), (403, "MEMBER_BINDING_MISMATCH", "not_authorized"), (503, "WORKSPACE_UNAVAILABLE", "unavailable"), (409, "BINDING_CHANGED", "binding_changed")])
 def test_error_codes_preserved_without_disclosing_bodies(service, status, code, state):
     fixture, agent = service
     fixture["error"] = status, code
     result = agent.remote("hosts")
     assert result == {"state": state, "code": code, "hosts": []}
+    if code == "MEMBER_NOT_REGISTERED":
+        assert agent.status()["state"] == "signed_in"
+        assert agent.status()["code"] == code
+        assert agent.access_token() == "synthetic-a"
+        assert not agent.remote_ssh.managed.exists()
     fixture["error"] = None
     with pytest.raises(AccessError, match="WORKSPACE_UNAVAILABLE"):
         agent.access.request(agent.access.origin[0] + "://127.0.0.1:" + str(agent.access.origin[2]) + "/upstream", agent.access_token())

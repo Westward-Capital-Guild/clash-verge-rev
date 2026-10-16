@@ -1,5 +1,7 @@
 ## Pilgrim Workspace (unreleased)
 
+- Keep company Feishu members signed in when personal work resources have not been assigned.
+
 - Connect company sign-in to personal network delivery and authorized SSH development hosts without employee configuration.
 
 - Preserve existing proxy and SSH settings, and stop when a host identity or managed key conflicts.

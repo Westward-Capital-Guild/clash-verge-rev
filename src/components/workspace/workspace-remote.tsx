@@ -9,8 +9,8 @@ import type {
 const messages: Record<WorkspaceRemoteStatus['state'], string> = {
   unconfigured: '公司开发机自动接入服务尚未就绪，无需手动填写服务器信息。',
   signed_out: '登录后查看分配给你的开发机。',
-  available: '请选择已授权的工作目录。远端继续使用已有的 Codex provider。',
-  unassigned: '当前账号尚未分配开发机，不影响已授权的公司网络。',
+  available: '请选择分配给你的工作目录。远端继续使用已有的 Codex provider。',
+  unassigned: '尚未分配个人开发机，不影响 Workspace 登录或已分配的公司网络。',
   unavailable: '暂时无法取得开发机清单，请稍后重试。',
   not_authorized: '该开发机或目录已不在你的授权范围内，请刷新清单。',
   missing_key:
@@ -99,7 +99,9 @@ export const WorkspaceRemote = ({
             ? messages[current.state]
             : '公司开发机自动接入服务尚未就绪，无需手动填写服务器信息。'}
       </p>
-      {current?.code && <p>错误码：{current.code}</p>}
+      {current?.code && current.state !== 'unassigned' && (
+        <p>错误码：{current.code}</p>
+      )}
       <button
         disabled={pending || !client.remote}
         onClick={() => void run('hosts')}

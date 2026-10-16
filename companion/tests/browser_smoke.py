@@ -275,6 +275,16 @@ def main():
                             page.get_by_role("button", name="连接公司网络", exact=True).wait_for()
                             page.wait_for_function("document.querySelectorAll('button').length > 0 && Array.from(document.querySelectorAll('button')).some(b => b.textContent === '连接公司网络' && b.disabled)")
                             assert page.get_by_role("heading", name="Synthetic host", exact=True).count() == 1
+                            fixture["error"] = 403, "MEMBER_NOT_REGISTERED"
+                            page.get_by_role("button", name="检查状态", exact=True).click()
+                            page.get_by_text("已登录 Workspace，个人工作资源尚未分配。", exact=True).wait_for()
+                            page.get_by_role("button", name="刷新开发机", exact=True).click()
+                            page.get_by_text("尚未分配个人开发机，不影响 Workspace 登录或已分配的公司网络。", exact=True).wait_for()
+                            assert page.get_by_role("heading", name="Fixture A", exact=True).count() == 1
+                            assert page.get_by_role("button", name="退出登录并断开", exact=True).is_enabled()
+                            assert "错误码：MEMBER_NOT_REGISTERED" not in page.locator("body").inner_text()
+                            page.screenshot(path=str(screenshot_dir / "company-unassigned-signed-in.png"), full_page=True)
+                            fixture["error"] = None
                             agent.store.clear()
                             page.get_by_role("button", name="检查状态", exact=True).click()
                             page.get_by_role("button", name="飞书登录", exact=True).wait_for()
