@@ -47,6 +47,7 @@ class Provider:
         self.refresh_count = 0
         self.claim_overrides = {}
         self.userinfo_name = "Smoke User"
+        self.userinfo_claims = {}
         self.cancel = False
         self.fail_policy = False
         self.fail_revoke = False
@@ -88,7 +89,11 @@ class Provider:
                 elif path.path == "/jwks":
                     self.reply({"keys": [provider.key.as_dict(is_private=False)]})
                 elif path.path == "/userinfo" and self.authenticated():
-                    self.reply({"sub": "smoke-user", "name": provider.userinfo_name})
+                    self.reply({
+                        "sub": "smoke-user",
+                        "name": provider.userinfo_name,
+                        **provider.userinfo_claims,
+                    })
                 elif path.path == "/authorize":
                     query = parse_qs(path.query)
                     provider.last_scope = query["scope"][0]
@@ -255,6 +260,10 @@ def test_sign_in_configure_refresh_model_and_logout(environment):
     assert agent.run("status")["state"] == "signed_out"
     provider.claim_overrides = {"name": "ou_smoke-user"}
     assert agent.run("login")["name"] == "Smoke User"
+    store.value["identity"]["name"] = "ou_smoke-user"
+    assert agent.status()["name"] == "Smoke User"
+    provider.userinfo_name = "feishu:on_smoke-user"
+    provider.userinfo_claims = {"profile": {"real_name": "Smoke User"}}
     store.value["identity"]["name"] = "ou_smoke-user"
     assert agent.status()["name"] == "Smoke User"
     target = agent.codex_path()

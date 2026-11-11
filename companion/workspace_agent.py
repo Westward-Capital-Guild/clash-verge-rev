@@ -384,14 +384,28 @@ class Agent:
 
     @staticmethod
     def _identity_name_from_claims(claims, subject):
-        for field in ("name", "display_name", "nickname", "preferred_username", "email"):
-            value = claims.get(field)
-            if not isinstance(value, str):
-                continue
-            value = value.strip()
-            if value and value != subject and not value.startswith("ou_"):
-                return value
+        sources = [claims]
+        profile = claims.get("profile") if isinstance(claims, dict) else None
+        if isinstance(profile, dict):
+            sources.append(profile)
+        for source in sources:
+            for field in (
+                "name", "display_name", "real_name", "full_name", "localized_name",
+                "en_name", "nickname", "preferred_username", "email",
+            ):
+                value = source.get(field)
+                if not isinstance(value, str):
+                    continue
+                value = value.strip()
+                if value and not Agent._is_identity_handle(value, subject):
+                    return value
         return None
+
+    @staticmethod
+    def _is_identity_handle(value, subject):
+        if value == subject:
+            return True
+        return value.startswith(("ou_", "on_", "feishu:ou_", "feishu:on_"))
 
     def _userinfo_name(self, token, subject):
         endpoint = self.discover().get("userinfo_endpoint")
