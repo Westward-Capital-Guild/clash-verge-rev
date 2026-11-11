@@ -606,12 +606,28 @@ impl Sysopt {
     async fn restore_proxy_lease(&self) -> Option<Result<()>> {
         let lease = self.proxy_lease.lock().take()?;
         self.stop_proxy_guard().await;
+        let previous = self.inner_proxy.read().clone();
         let restoration = lease.clone();
         let result = tokio::task::spawn_blocking(move || restoration.restore())
             .await
             .map_err(anyhow::Error::from)
             .and_then(|result| result);
         if result.is_err() {
+            // A transient SCPreferences lock failure must not leave the user's network
+            // pointed at a dead local proxy after the app exits. Only clear the proxy when
+            // the OS still matches the target this process applied; unrelated proxy changes
+            // remain untouched and the lease is retained for a later retry.
+            if self.force_disable_owned_proxy(previous).await.is_ok() {
+                logging!(
+                    warn,
+                    Type::Core,
+                    "proxy lease restoration failed; cleared the workspace-owned proxy instead"
+                );
+                let (sys, auto) = &mut *self.inner_proxy.write();
+                sys.enable = false;
+                auto.enable = false;
+                return Some(Ok(()));
+            }
             // Keep ownership for retry; controlled shutdown leaves the core running on failure.
             *self.proxy_lease.lock() = Some(lease);
             return Some(result);
@@ -620,6 +636,26 @@ impl Sysopt {
         sys.enable = false;
         auto.enable = false;
         Some(result)
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn force_disable_owned_proxy(&self, previous: (Sysproxy, Autoproxy)) -> Result<()> {
+        let owned = tokio::task::spawn_blocking({
+            let previous = previous.clone();
+            move || {
+                let snapshot = Sysproxy::snapshot()?;
+                Ok::<_, sysproxy::Error>(
+                    proxy_ownership_action(&snapshot, &previous, false) == ProxyOwnershipAction::Apply,
+                )
+            }
+        })
+        .await??;
+        anyhow::ensure!(owned, "system proxy ownership changed during lease restoration");
+
+        let (mut sys, mut auto) = previous;
+        sys.enable = false;
+        auto.enable = false;
+        disable_all_proxies(sys, auto).await
     }
 
     /// reset the sysproxy

@@ -118,7 +118,12 @@ mod app_init {
         logging!(debug, Type::Setup, "初始化窗口状态管理...");
         let window_state_plugin = tauri_plugin_window_state::Builder::new()
             .with_filename(files::WINDOW_STATE)
-            .with_state_flags(tauri_plugin_window_state::StateFlags::default())
+            // Full-screen is a transient user action. Persisting it can reopen a
+            // decorationless window after a forced quit, leaving no visible exit
+            // control for the next session.
+            .with_state_flags(
+                tauri_plugin_window_state::StateFlags::all() & !tauri_plugin_window_state::StateFlags::FULLSCREEN,
+            )
             .build();
         app.handle().plugin(window_state_plugin)?;
         Ok(())
