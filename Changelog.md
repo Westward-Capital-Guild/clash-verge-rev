@@ -22,6 +22,8 @@
 
 - Clear the workspace-owned macOS proxy when proxy restoration fails during exit.
 
+- Show the member display name from OIDC user information instead of the Feishu subject ID.
+
 ## v2.5.9
 
 <details>

@@ -339,6 +339,11 @@ class Agent:
                     self.access.url(self.metadata[field])
                 else:
                     secure_url(self.metadata[field])
+            if self.metadata.get("userinfo_endpoint"):
+                if self.access:
+                    self.access.url(self.metadata["userinfo_endpoint"])
+                else:
+                    secure_url(self.metadata["userinfo_endpoint"])
             if self.access and "none" not in self.metadata.get("token_endpoint_auth_methods_supported", []):
                 raise AgentError("PUBLIC_CLIENT_REQUIRED")
             if "S256" not in self.metadata.get("code_challenge_methods_supported", []):
@@ -370,12 +375,43 @@ class Agent:
         claims.validate(leeway=30)
         if subject is not None and claims["sub"] != subject:
             raise AgentError("SUBJECT_MISMATCH")
+        subject = claims["sub"]
+        name = self._identity_name_from_claims(claims, subject) or self._userinfo_name(token, subject)
         return {
-            "sub": claims["sub"],
-            "name": claims.get("name")
-            or claims.get("preferred_username")
-            or claims["sub"],
+            "sub": subject,
+            "name": name or subject,
         }
+
+    @staticmethod
+    def _identity_name_from_claims(claims, subject):
+        for field in ("name", "display_name", "nickname", "preferred_username", "email"):
+            value = claims.get(field)
+            if not isinstance(value, str):
+                continue
+            value = value.strip()
+            if value and value != subject and not value.startswith("ou_"):
+                return value
+        return None
+
+    def _userinfo_name(self, token, subject):
+        endpoint = self.discover().get("userinfo_endpoint")
+        if not endpoint:
+            return None
+        try:
+            response = requests.get(
+                endpoint,
+                headers={"Authorization": "Bearer " + token["access_token"]},
+                timeout=15,
+                allow_redirects=False,
+            )
+            if not 200 <= response.status_code < 300:
+                return None
+            value = response.json()
+        except (KeyError, requests.RequestException, ValueError, TypeError):
+            return None
+        if not isinstance(value, dict) or value.get("sub") != subject:
+            raise AgentError("SUBJECT_MISMATCH")
+        return self._identity_name_from_claims(value, subject)
 
     def client(self, **kwargs):
         return OAuth2Session(
@@ -488,7 +524,9 @@ class Agent:
                     )
                 )
             if "id_token" in refreshed:
-                self.validate_identity(refreshed, subject=session["identity"]["sub"])
+                session["identity"] = self.validate_identity(
+                    refreshed, subject=session["identity"]["sub"]
+                )
             refreshed.setdefault("refresh_token", token["refresh_token"])
             session["token"] = refreshed
             self.store.set(session)
@@ -513,6 +551,20 @@ class Agent:
         state = "signed_out" if not session else "signed_in"
         if session and session["token"].get("expires_at", 0) <= time.time():
             state = "expired"
+        if session and state == "signed_in":
+            identity = session.get("identity", {})
+            subject = identity.get("sub")
+            if (
+                isinstance(subject, str)
+                and self._identity_name_from_claims(identity, subject) is None
+            ):
+                try:
+                    name = self._userinfo_name(session["token"], subject)
+                except (AgentError, AccessError):
+                    name = None
+                if name:
+                    session["identity"] = {"sub": subject, "name": name}
+                    self.store.set(session)
         config = self.codex_path()
         configured = False
         managed = self.codex_managed_path()

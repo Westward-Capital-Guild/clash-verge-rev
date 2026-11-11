@@ -46,6 +46,7 @@ class Provider:
         self.revoked = []
         self.refresh_count = 0
         self.claim_overrides = {}
+        self.userinfo_name = "Smoke User"
         self.cancel = False
         self.fail_policy = False
         self.fail_revoke = False
@@ -79,12 +80,15 @@ class Provider:
                             "authorization_endpoint": provider.base + "/authorize",
                             "token_endpoint": provider.base + "/token",
                             "jwks_uri": provider.base + "/jwks",
+                            "userinfo_endpoint": provider.base + "/userinfo",
                             "revocation_endpoint": provider.base + "/revoke",
                             "code_challenge_methods_supported": ["S256"],
                         }
                     )
                 elif path.path == "/jwks":
                     self.reply({"keys": [provider.key.as_dict(is_private=False)]})
+                elif path.path == "/userinfo" and self.authenticated():
+                    self.reply({"sub": "smoke-user", "name": provider.userinfo_name})
                 elif path.path == "/authorize":
                     query = parse_qs(path.query)
                     provider.last_scope = query["scope"][0]
@@ -249,7 +253,10 @@ def environment(tmp_path, monkeypatch):
 def test_sign_in_configure_refresh_model_and_logout(environment):
     agent, provider, store = environment
     assert agent.run("status")["state"] == "signed_out"
+    provider.claim_overrides = {"name": "ou_smoke-user"}
     assert agent.run("login")["name"] == "Smoke User"
+    store.value["identity"]["name"] = "ou_smoke-user"
+    assert agent.status()["name"] == "Smoke User"
     target = agent.codex_path()
     target.parent.mkdir()
     original = '# Personal settings\nmodel = "personal-model"\n[projects."/work"]\ntrust_level = "trusted"\n'
