@@ -21,12 +21,15 @@ export interface WorkspaceClient {
     action: WorkspaceRemoteAction,
     hostId?: string,
     workspaceId?: string,
+    identityPath?: string,
+    exportPath?: string,
   ) => Promise<WorkspaceRemoteStatus>
 }
 
 export const workspaceClient: WorkspaceClient = {
-  async remote(action, hostId, workspaceId) {
-    const command = () => workspaceRemote(action, hostId, workspaceId)
+  async remote(action, hostId, workspaceId, identityPath, exportPath) {
+    const command = () =>
+      workspaceRemote(action, hostId, workspaceId, identityPath, exportPath)
     if (action === 'hosts') return command()
     const result = await mutate(command, {
       id: 'workspace-remote',

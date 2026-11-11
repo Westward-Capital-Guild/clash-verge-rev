@@ -861,7 +861,7 @@ class Agent:
         identity = session.get("identity", {})
         return (session.get("provider"), identity.get("sub"), session.get("session_id"))
 
-    def remote(self, action, host_id=None, workspace_id=None):
+    def remote(self, action, host_id=None, workspace_id=None, identity_path=None, export_path=None):
         # Bootstrap/access-service delivery owns this adapter; no employee JSON wiring.
         if self.remote_authority is None and self.access is None:
             return {"state": "unconfigured", "hosts": []}
@@ -929,6 +929,8 @@ class Agent:
             if record is None or not any(w["id"] == workspace_id for w in record["workspaces"]):
                 return {"state": "not_authorized", "hosts": []}
             operation = self.remote_ssh.prepare if action == "prepare" else self.remote_ssh.check
+            if action == "export":
+                operation = self.remote_ssh.export
             if self.access and record["ssh_access_mode"] == "managed-keypair":
                 # Only an explicit preparation/check fetches the approved key.
                 credential = record.pop("private_key", None) if self.access.bootstrap.get("configurations_endpoint") else self.access.credential(token, record)
@@ -936,9 +938,19 @@ class Agent:
                     raise AccessError("LOCAL_KEY_REQUIRED")
                 if self.session_binding() != session:
                     return {"state": "not_authorized", "hosts": []}
-                result = operation(record, workspace_id, credential=credential)
+                if action == "export":
+                    if not export_path:
+                        raise AgentError("EXPORT_PATH_REQUIRED")
+                    result = operation(record, workspace_id, export_path, credential=credential)
+                else:
+                    result = operation(record, workspace_id, credential=credential)
             else:
-                result = operation(record, workspace_id)
+                if action == "export":
+                    raise AgentError("EXPORT_NOT_SUPPORTED")
+                if identity_path:
+                    result = operation(record, workspace_id, identity_path=identity_path)
+                else:
+                    result = operation(record, workspace_id)
             if self.session_binding() != session:
                 return {"state": "not_authorized", "hosts": []}
             if self.access and self.access.bootstrap.get("configurations_endpoint"):
@@ -952,7 +964,7 @@ class Agent:
                         "codex_unavailable": "connection_failed",
                     }.get(result.get("state"), "connection_failed")
                     self._report(token, configuration, "failed", code)
-            return {**result, "hosts": []}
+            return {**result, "key_mode": record.get("ssh_access_mode"), "hosts": []}
         except (AccessError, AgentError) as error:
             code = str(error)
             state = {
@@ -1018,6 +1030,7 @@ def main():
             "remote-hosts",
             "remote-prepare",
             "remote-check",
+            "remote-export",
             "report",
             "ssh-proxy",
         ],
@@ -1031,6 +1044,8 @@ def main():
     parser.add_argument("--proxy-port", type=int)
     parser.add_argument("--target-host")
     parser.add_argument("--target-port", type=int)
+    parser.add_argument("--identity-path")
+    parser.add_argument("--export-path")
     args = parser.parse_args()
     try:
         if args.action == "ssh-proxy":
@@ -1041,7 +1056,7 @@ def main():
             value = agent.report_stage(args.configuration_id, args.revision, args.stage, args.error_code)
         else:
             value = (
-                agent.remote(args.action.removeprefix("remote-"), args.host_id, args.workspace_id)
+                agent.remote(args.action.removeprefix("remote-"), args.host_id, args.workspace_id, args.identity_path, args.export_path)
                 if args.action.startswith("remote-") else agent.run(args.action)
             )
         print(

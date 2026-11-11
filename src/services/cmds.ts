@@ -524,6 +524,14 @@ export function workspaceRemote(
   action: import('./workspace-contract').WorkspaceRemoteAction,
   hostId?: string,
   workspaceId?: string,
+  identityPath?: string,
+  exportPath?: string,
 ): Promise<import('./workspace-contract').WorkspaceRemoteStatus> {
-  return commands.workspaceRemote(action, hostId ?? null, workspaceId ?? null)
+  return commands.workspaceRemote(
+    action,
+    hostId ?? null,
+    workspaceId ?? null,
+    identityPath ?? null,
+    exportPath ?? null,
+  )
 }

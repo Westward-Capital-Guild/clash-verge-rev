@@ -122,6 +122,32 @@ def check_permissions(path, *, private=True):
         raise RemoteError("config_conflict")
 
 
+def private_key_fingerprint(path):
+    """Read only the public half of a user-selected private key."""
+    if path.is_symlink() or not path.is_file():
+        raise RemoteError("missing_key")
+    check_permissions(path)
+    sidecars = [path.with_name(path.name + ".pub")]
+    if path.suffix:
+        sidecars.append(path.with_suffix(".pub"))
+    for sidecar in sidecars:
+        if sidecar.is_symlink() or not sidecar.is_file():
+            continue
+        try:
+            return key_fingerprint(sidecar.read_text())
+        except (OSError, UnicodeError, RemoteError):
+            continue
+    try:
+        key = serialization.load_ssh_private_key(path.read_bytes(), password=None)
+        public = key.public_key().public_bytes(
+            serialization.Encoding.OpenSSH,
+            serialization.PublicFormat.OpenSSH,
+        ).decode()
+        return key_fingerprint(public)
+    except (OSError, ValueError, TypeError, UnicodeError, RemoteError):
+        raise RemoteError("missing_key") from None
+
+
 def write_private(path, content):
     fd, name = tempfile.mkstemp(dir=path.parent)
     try:
@@ -186,7 +212,19 @@ class RemoteSSH:
         self.runner = runner
         self.proxy_port = proxy_port
 
-    def public_identity(self, allowed):
+    def public_identity(self, allowed, identity_path=None):
+        if identity_path:
+            path = Path(identity_path).expanduser()
+            if private_key_fingerprint(path) in allowed:
+                return path
+            raise RemoteError("missing_key")
+        for name in ("id_ed25519", "id_ecdsa", "id_rsa", "id_dsa"):
+            path = self.ssh / name
+            try:
+                if private_key_fingerprint(path) in allowed:
+                    return path
+            except RemoteError:
+                continue
         for path in sorted(self.ssh.glob("*.pub")):
             if path.is_symlink() or not path.is_file():
                 continue
@@ -222,11 +260,11 @@ class RemoteSSH:
             raise RemoteError("key_mismatch") from None
         return self.managed / (self.alias(record) + ".key")
 
-    def prepare(self, record, workspace_id, *, credential=None):
+    def prepare(self, record, workspace_id, *, credential=None, identity_path=None):
         connection, workspace = checked_record(record, workspace_id)
         if connection.get("network_requirement") == "company_proxy" and not self.proxy_port:
             raise RemoteError("network_required")
-        identity = self.managed_identity(record, credential) if record.get("ssh_access_mode") == "managed-keypair" else self.public_identity(record["user_key_fingerprints"])
+        identity = self.managed_identity(record, credential) if record.get("ssh_access_mode") == "managed-keypair" else self.public_identity(record["user_key_fingerprints"], identity_path)
         alias = self.alias(record)
         if self.ssh.is_symlink() or self.managed.is_symlink():
             raise RemoteError("config_conflict")
@@ -325,8 +363,8 @@ class RemoteSSH:
             return {"state": "desktop_config_conflict", "alias": alias, "path": workspace["path"]}
         return {"state": "ssh_prepared", "alias": alias, "path": workspace["path"]}
 
-    def check(self, record, workspace_id, *, credential=None):
-        prepared = self.prepare(record, workspace_id, credential=credential)
+    def check(self, record, workspace_id, *, credential=None, identity_path=None):
+        prepared = self.prepare(record, workspace_id, credential=credential, identity_path=identity_path)
         if prepared["state"] != "ssh_prepared":
             return prepared
         connection, workspace = checked_record(record, workspace_id)
@@ -357,6 +395,22 @@ class RemoteSSH:
         if not lines[2].startswith("/"):
             return {**prepared, "state": "codex_unavailable"}
         return {**prepared, "state": "ssh_ready"}
+
+    def export(self, record, workspace_id, destination, *, credential=None):
+        checked_record(record, workspace_id)
+        if record.get("ssh_access_mode") != "managed-keypair" or not credential:
+            raise RemoteError("invalid_identity_path")
+        self.managed_identity(record, credential)
+        path = Path(destination).expanduser()
+        if not path.is_absolute() or path.is_symlink() or (path.exists() and not path.is_file()):
+            raise RemoteError("config_conflict")
+        if path.parent.is_symlink() or not path.parent.is_dir():
+            raise RemoteError("config_conflict")
+        if path.exists():
+            check_permissions(path)
+        write_private(path, credential)
+        check_permissions(path)
+        return {"state": "ssh_exported", "path": str(path)}
 
 
 def public_hosts(records):

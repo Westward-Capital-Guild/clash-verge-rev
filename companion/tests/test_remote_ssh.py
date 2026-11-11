@@ -34,7 +34,7 @@ def remote(tmp_path):
 
 def test_preserves_config_and_rejects_changed_pin(remote):
     manager, record, identity, server = remote
-    manager.public_identity = lambda _: identity.with_suffix(".pub").read_text()
+    manager.public_identity = lambda _, __=None: identity.with_suffix(".pub").read_text()
     config = manager.ssh / "config"
     original = b"# Personal settings\r\nHost personal\r\n  HostName personal.invalid\r\n"
     config.write_bytes(original)
@@ -49,7 +49,7 @@ def test_preserves_config_and_rejects_changed_pin(remote):
         assert expected in result.stdout
     public_path = manager.managed / f"{first['alias']}.pub"
     previous_public = public_path.read_bytes()
-    manager.public_identity = lambda _: server.with_suffix(".pub").read_text()
+    manager.public_identity = lambda _, __=None: server.with_suffix(".pub").read_text()
     changed = copy.deepcopy(record)
     changed["connection"]["host_keys"] = [Path(remote[2]).with_suffix(".pub").read_text()]
     with pytest.raises(RemoteError, match="config_conflict"):
@@ -122,10 +122,10 @@ def test_real_loopback_ssh_checks_user_directory_and_codex(remote, tmp_path):
             wrong_pin = copy.deepcopy(record)
             wrong_pin["connection"]["host_keys"] = [identity.with_suffix(".pub").read_text()]
             wrong_manager = RemoteSSH(tmp_path / "wrong-pin-home")
-            wrong_manager.public_identity = lambda _: identity
+            wrong_manager.public_identity = lambda _, __=None: identity
             assert wrong_manager.check(wrong_pin, "project")["state"] == "host_key_conflict"
             wrong_identity = RemoteSSH(tmp_path / "wrong-identity-home")
-            wrong_identity.public_identity = lambda _: server
+            wrong_identity.public_identity = lambda _, __=None: server
             assert wrong_identity.check(record, "project")["state"] == "permission_denied"
             record["workspaces"][0]["path"] = str(tmp_path / "missing")
             assert manager.check(record, "project")["state"] == "unreachable"
@@ -171,3 +171,33 @@ def test_ssh_check_does_not_block_model_helper_and_rejects_signed_out_result(rem
             store.value = replacement
             finish.set()
             assert operation.result()["state"] == "not_authorized"
+
+
+def test_private_key_without_sidecar_can_be_selected_and_export_is_scoped(remote, tmp_path):
+    manager, record, identity, _ = remote
+    identity.with_suffix(".pub").unlink()
+    assert manager.public_identity(record["user_key_fingerprints"]) == identity
+    selected = tmp_path / "selected-key"
+    selected.write_bytes(identity.read_bytes())
+    selected.chmod(0o600)
+    assert manager.public_identity(record["user_key_fingerprints"], selected) == selected
+    with pytest.raises(RemoteError, match="missing_key"):
+        manager.public_identity(["SHA256:not-the-key"], selected)
+
+    managed = copy.deepcopy(record)
+    managed["ssh_access_mode"] = "managed-keypair"
+    managed["managed_key_fingerprint"] = record["user_key_fingerprints"][0]
+    private = identity.read_text()
+    exported = tmp_path / "exports" / "pilgrim.key"
+    exported.parent.mkdir()
+    result = manager.export(
+        managed,
+        "project",
+        exported,
+        credential=private,
+    )
+    assert result == {"state": "ssh_exported", "path": str(exported)}
+    assert exported.read_text() == private
+    assert exported.stat().st_mode & 0o077 == 0
+    with pytest.raises(RemoteError, match="invalid_identity_path"):
+        manager.export(record, "project", tmp_path / "registered.key", credential=private)

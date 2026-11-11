@@ -569,6 +569,7 @@ pub enum WorkspaceRemoteAction {
     Hosts,
     Prepare,
     Check,
+    Export,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, specta::Type)]
@@ -594,6 +595,7 @@ pub enum WorkspaceRemoteState {
     PermissionDenied,
     DesktopConfigConflict,
     NetworkRequired,
+    SshExported,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, specta::Type)]
@@ -621,6 +623,8 @@ pub struct WorkspaceRemoteStatus {
     hosts: Vec<WorkspaceRemoteHost>,
     alias: Option<String>,
     path: Option<String>,
+    #[serde(default)]
+    key_mode: Option<String>,
 }
 
 #[tauri::command]
@@ -629,6 +633,8 @@ pub async fn workspace_remote(
     action: WorkspaceRemoteAction,
     host_id: Option<String>,
     workspace_id: Option<String>,
+    identity_path: Option<String>,
+    export_path: Option<String>,
 ) -> CmdResult<WorkspaceRemoteStatus> {
     if crate::core::handle::Handle::global().is_exiting() {
         return Err(failure("WORKSPACE_CANCELLED"));
@@ -638,6 +644,7 @@ pub async fn workspace_remote(
         WorkspaceRemoteAction::Hosts => "remote-hosts",
         WorkspaceRemoteAction::Prepare => "remote-prepare",
         WorkspaceRemoteAction::Check => "remote-check",
+        WorkspaceRemoteAction::Export => "remote-export",
     };
     let mut args = vec![name];
     if !matches!(action, WorkspaceRemoteAction::Hosts) {
@@ -649,6 +656,12 @@ pub async fn workspace_remote(
                 .as_deref()
                 .ok_or_else(|| failure("WORKSPACE_HOST_REQUIRED"))?,
         ]);
+    }
+    if let Some(path) = identity_path.as_deref() {
+        args.extend(["--identity-path", path]);
+    }
+    if let Some(path) = export_path.as_deref() {
+        args.extend(["--export-path", path]);
     }
     let value = match companion_args(&args).await {
         Ok(value) => value,

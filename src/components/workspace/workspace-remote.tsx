@@ -1,3 +1,4 @@
+import { open, save } from '@tauri-apps/plugin-dialog'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type {
@@ -14,7 +15,7 @@ const messages: Record<WorkspaceRemoteStatus['state'], string> = {
   unavailable: '暂时无法取得开发机清单，请稍后重试。',
   not_authorized: '该开发机或目录已不在你的授权范围内，请刷新清单。',
   missing_key:
-    '本机未找到与已登记指纹匹配的 SSH 密钥，请联系公司支持。无需上传私钥。',
+    '本机未找到与已登记指纹匹配的 SSH 私钥。可以选择本机已有私钥重试；私钥不会上传。',
   unverified_host: '开发机缺少已核验的主机密钥，请联系管理员补齐。',
   invalid_host: '开发机接入信息不完整，请联系管理员。',
   config_conflict:
@@ -33,6 +34,7 @@ const messages: Record<WorkspaceRemoteStatus['state'], string> = {
     'SSH 配置已准备，但个人 SSH 设置影响 Desktop 连接，请联系公司支持。',
   codex_unavailable:
     'SSH 可用，远端登录环境未找到 Codex 命令，请联系公司支持。',
+  ssh_exported: '新的 SSH 私钥已导出到你选择的位置。请妥善保存并按需分发。',
 }
 
 export const WorkspaceRemote = ({
@@ -48,11 +50,18 @@ export const WorkspaceRemote = ({
   const [listing, setListing] = useState<WorkspaceRemoteStatus | null>(null)
   const [result, setResult] = useState<WorkspaceRemoteStatus | null>(null)
   const [pending, setPending] = useState(false)
+  const [identityPath, setIdentityPath] = useState<string>()
+  const [target, setTarget] = useState<{
+    hostId: string
+    workspaceId: string
+  }>()
   const run = useCallback(
     async (
       action: WorkspaceRemoteAction,
       hostId?: string,
       workspaceId?: string,
+      selectedIdentityPath?: string,
+      exportPath?: string,
     ) => {
       if (!client.remote) return
       const id = ++requestRef.current
@@ -60,7 +69,13 @@ export const WorkspaceRemote = ({
       setPending(true)
       setResult(null)
       try {
-        const next = await client.remote(action, hostId, workspaceId)
+        const next = await client.remote(
+          action,
+          hostId,
+          workspaceId,
+          selectedIdentityPath,
+          exportPath,
+        )
         if (id !== requestRef.current) return
         if (action === 'hosts') setListing(next)
         else setResult(next)
@@ -78,6 +93,33 @@ export const WorkspaceRemote = ({
       }
     },
     [client],
+  )
+  const chooseIdentity = useCallback(
+    async (hostId: string, workspaceId: string) => {
+      const selected = await open({
+        directory: false,
+        multiple: false,
+        title: '选择 SSH 私钥',
+      })
+      if (typeof selected !== 'string') return
+      setIdentityPath(selected)
+      setTarget({ hostId, workspaceId })
+      await run('check', hostId, workspaceId, selected)
+    },
+    [run],
+  )
+  const exportManagedKey = useCallback(
+    async (hostId: string, workspaceId: string) => {
+      const selected = await save({
+        title: '导出 SSH 私钥',
+        defaultPath: `pilgrim-${hostId}.key`,
+        filters: [{ name: 'SSH private key', extensions: ['key', 'pem'] }],
+      })
+      if (!selected) return
+      setTarget({ hostId, workspaceId })
+      await run('export', hostId, workspaceId, undefined, selected)
+    },
+    [run],
   )
   useEffect(() => {
     void sessionState
@@ -140,18 +182,51 @@ export const WorkspaceRemote = ({
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() => void run('prepare', host.id, workspace.id)}
+                    onClick={() => {
+                      setTarget({ hostId: host.id, workspaceId: workspace.id })
+                      void run('prepare', host.id, workspace.id, identityPath)
+                    }}
                   >
                     准备 SSH
                   </button>
                   <button
                     type="button"
                     disabled={pending}
-                    onClick={() => void run('check', host.id, workspace.id)}
+                    onClick={() => {
+                      setTarget({ hostId: host.id, workspaceId: workspace.id })
+                      void run('check', host.id, workspace.id, identityPath)
+                    }}
                   >
                     检查连接
                   </button>
                 </div>
+                {result?.state === 'missing_key' &&
+                  target?.hostId === host.id &&
+                  target.workspaceId === workspace.id && (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => void chooseIdentity(host.id, workspace.id)}
+                    >
+                      选择私钥并重试
+                    </button>
+                  )}
+                {result &&
+                  (result.state === 'ssh_prepared' ||
+                    result.state === 'ssh_ready') &&
+                  result.key_mode === 'managed-keypair' &&
+                  target?.hostId === host.id &&
+                  target.workspaceId === workspace.id && (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() =>
+                        void exportManagedKey(host.id, workspace.id)
+                      }
+                    >
+                      导出私钥
+                    </button>
+                  )}
               </div>
             ))}
           </div>

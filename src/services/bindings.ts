@@ -10,11 +10,15 @@ export const commands = {
     action: WorkspaceRemoteAction,
     hostId: string | null,
     workspaceId: string | null,
+    identityPath: string | null,
+    exportPath: string | null,
   ) =>
     __TAURI_INVOKE<WorkspaceRemoteStatus>('workspace_remote', {
       action,
       hostId,
       workspaceId,
+      identityPath,
+      exportPath,
     }),
   getSystemInfo: () => __TAURI_INVOKE<SystemInfo>('get_system_info'),
   /**  获取应用的运行时间（毫秒） */
@@ -1100,7 +1104,7 @@ export type WorkspaceObservation = {
 
 export type WorkspaceProvider = 'feishu' | 'authentik'
 
-export type WorkspaceRemoteAction = 'hosts' | 'prepare' | 'check'
+export type WorkspaceRemoteAction = 'hosts' | 'prepare' | 'check' | 'export'
 
 export type WorkspaceRemoteDirectory = {
   id: string
@@ -1136,6 +1140,7 @@ export type WorkspaceRemoteState =
   | 'permission_denied'
   | 'desktop_config_conflict'
   | 'network_required'
+  | 'ssh_exported'
 
 export type WorkspaceRemoteStatus = {
   code?: string | null
@@ -1143,6 +1148,7 @@ export type WorkspaceRemoteStatus = {
   hosts: WorkspaceRemoteHost[]
   alias: string | null
   path: string | null
+  key_mode?: string | null
 }
 
 export type WorkspaceReport = {
