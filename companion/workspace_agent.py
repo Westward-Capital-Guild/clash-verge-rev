@@ -551,7 +551,7 @@ class Agent:
         state = "signed_out" if not session else "signed_in"
         if session and session["token"].get("expires_at", 0) <= time.time():
             state = "expired"
-        if session and state == "signed_in":
+        if session and state in ("signed_in", "expired"):
             identity = session.get("identity", {})
             subject = identity.get("sub")
             if (
