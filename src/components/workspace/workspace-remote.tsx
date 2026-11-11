@@ -38,9 +38,11 @@ const messages: Record<WorkspaceRemoteStatus['state'], string> = {
 export const WorkspaceRemote = ({
   client,
   sessionState,
+  selectedHostId,
 }: {
   client: WorkspaceClient
   sessionState?: string
+  selectedHostId?: string
 }) => {
   const requestRef = useRef(0)
   const [listing, setListing] = useState<WorkspaceRemoteStatus | null>(null)
@@ -78,11 +80,12 @@ export const WorkspaceRemote = ({
     [client],
   )
   useEffect(() => {
+    void sessionState
     void run('hosts')
     return () => {
       requestRef.current += 1
     }
-  }, [run, sessionState])
+  }, [run, sessionState, selectedHostId])
   const current = result || listing
   return (
     <section
@@ -103,51 +106,56 @@ export const WorkspaceRemote = ({
         <p>错误码：{current.code}</p>
       )}
       <button
+        type="button"
         disabled={pending || !client.remote}
         onClick={() => void run('hosts')}
       >
         刷新开发机
       </button>
-      {listing?.hosts.map((host) => (
-        <div key={host.id} className="workspace-remote-host">
-          <h3>{host.display_name}</h3>
-          <p>
-            网络条件：
-            {host.network_requirement === 'company_proxy'
-              ? '先连接公司网络'
-              : host.network_requirement === 'tailscale'
-                ? '需要 Tailscale 网络'
-                : '可直接连接'}
-          </p>
-          {host.workspaces.map((workspace) => (
-            <div key={workspace.id}>
-              <p>
-                {workspace.display_name}
-                {workspace.path && (
-                  <>
-                    {' '}
-                    · <code>{workspace.path}</code>
-                  </>
-                )}
-              </p>
-              <div className="workspace-login-options">
-                <button
-                  disabled={pending}
-                  onClick={() => void run('prepare', host.id, workspace.id)}
-                >
-                  准备 SSH
-                </button>
-                <button
-                  disabled={pending}
-                  onClick={() => void run('check', host.id, workspace.id)}
-                >
-                  检查连接
-                </button>
+      {listing?.hosts
+        .filter((host) => !selectedHostId || host.id === selectedHostId)
+        .map((host) => (
+          <div key={host.id} className="workspace-remote-host">
+            <h3>{host.display_name}</h3>
+            <p>
+              网络条件：
+              {host.network_requirement === 'company_proxy'
+                ? '先连接公司网络'
+                : host.network_requirement === 'tailscale'
+                  ? '需要 Tailscale 网络'
+                  : '可直接连接'}
+            </p>
+            {host.workspaces.map((workspace) => (
+              <div key={workspace.id}>
+                <p>
+                  {workspace.display_name}
+                  {workspace.path && (
+                    <>
+                      {' '}
+                      · <code>{workspace.path}</code>
+                    </>
+                  )}
+                </p>
+                <div className="workspace-login-options">
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => void run('prepare', host.id, workspace.id)}
+                  >
+                    准备 SSH
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => void run('check', host.id, workspace.id)}
+                  >
+                    检查连接
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      ))}
+            ))}
+          </div>
+        ))}
       {result?.state === 'ssh_ready' && result.alias && result.path && (
         <div className="workspace-command">
           <p>

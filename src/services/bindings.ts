@@ -1082,6 +1082,22 @@ export type WorkspaceCapabilities = {
   local_model: string
 }
 
+export type WorkspaceConfiguration = {
+  id: string
+  kind: string
+  revision: string
+  preparation: string
+  observation?: WorkspaceObservation | null
+}
+
+export type WorkspaceObservation = {
+  principal_id: string
+  configuration_id: string
+  revision: string
+  status: string
+  reason?: string | null
+}
+
 export type WorkspaceProvider = 'feishu' | 'authentik'
 
 export type WorkspaceRemoteAction = 'hosts' | 'prepare' | 'check'
@@ -1129,6 +1145,16 @@ export type WorkspaceRemoteStatus = {
   path: string | null
 }
 
+export type WorkspaceReport = {
+  configuration_id: string
+  revision: string
+  sequence: number
+  stage: string
+  error_code?: string | null
+  source?: string | null
+  received_at?: string | null
+}
+
 export type WorkspaceState =
   | 'unconfigured'
   | 'signed_out'
@@ -1147,6 +1173,13 @@ export type WorkspaceStatus = {
   code?: string | null
   capabilities?: WorkspaceCapabilities | null
   network_stage?: string | null
+  configurations?: WorkspaceConfiguration[]
+  installation_id?: string | null
+  installation_reports?: WorkspaceReport[]
+  catalogue_code?: string | null
+  installation_code?: string | null
+  system_proxy_closed?: boolean | null
+  system_proxy_error?: string | null
 }
 
 export type YamlMapping = { [key in string]: JsonValue }

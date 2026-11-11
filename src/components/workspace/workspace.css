@@ -107,11 +107,61 @@
   gap: 20px;
   margin-top: 24px;
 }
+.workspace-workbench {
+  display: grid;
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  gap: 20px;
+  margin-top: 24px;
+  align-items: start;
+}
+.workspace-resource-index {
+  background: #fffdf8;
+  border: 1px solid #d9ded5;
+  border-radius: 8px;
+  padding: 18px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: sticky;
+  top: 0;
+}
+.workspace-resource-index button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  border-color: transparent;
+  text-align: left;
+  padding: 10px 12px;
+}
+.workspace-resource-index button.active {
+  background: #e4eadf;
+  border-color: #b8c8b9;
+}
+.workspace-resource-index small {
+  color: #516458;
+  font-size: 12px;
+}
+.workspace-index-note,
+.workspace-evidence {
+  color: #516458;
+  font-size: 13px;
+}
+.workspace-resource-detail {
+  min-width: 0;
+}
+.workspace-resource-meta {
+  margin: 12px 0 0;
+}
 .workspace-service {
   background: #fffdf8;
   border: 1px solid #d9ded5;
   border-radius: 8px;
   padding: 24px;
+}
+.workspace-resource-detail > .workspace-service {
+  margin-top: 0;
 }
 .workspace-service p {
   margin: 16px 0;
@@ -119,6 +169,34 @@
 .workspace-status {
   color: #3156d3;
   font-size: 14px;
+}
+.workspace-evidence-details {
+  margin: 18px 0 4px;
+  border-top: 1px solid #d9ded5;
+  padding-top: 12px;
+  color: #516458;
+  font-size: 13px;
+}
+.workspace-evidence-details summary {
+  color: #0b4f43;
+  cursor: pointer;
+  font-weight: 600;
+}
+.workspace-evidence-details dl {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.35fr) minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 12px 0 0;
+}
+.workspace-evidence-details dt {
+  color: #516458;
+}
+.workspace-evidence-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.workspace-evidence-details p {
+  margin: 10px 0 0;
 }
 .workspace-message {
   margin: 20px 0;
@@ -193,6 +271,25 @@
   .workspace-navigation {
     min-width: 140px;
     padding: 20px 8px;
+  }
+  .workspace-workbench {
+    display: block;
+  }
+  .workspace-resource-index {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    margin-bottom: 16px;
+    padding: 8px;
+  }
+  .workspace-resource-index .workspace-index {
+    display: none;
+  }
+  .workspace-resource-index button {
+    min-width: 150px;
+  }
+  .workspace-index-note {
+    display: none;
   }
 }
 

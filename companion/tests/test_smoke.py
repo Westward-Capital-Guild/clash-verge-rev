@@ -7,6 +7,7 @@ import platform
 from pathlib import Path
 import socket
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,8 +15,6 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 from authlib.jose import JsonWebKey, JsonWebToken
 import pytest
-import keyring
-from keyring.backends.null import Keyring as NullKeyring
 import requests
 import tomlkit
 
@@ -385,12 +384,10 @@ def test_missing_config_has_no_keyring_dependency(tmp_path):
     assert Agent(tmp_path / "missing.json").run("status")["state"] == "unconfigured"
 
 
-def test_unavailable_os_keyring_has_no_plaintext_fallback(environment, monkeypatch):
-    agent, _, _ = environment
-    monkeypatch.setattr(keyring, "get_keyring", lambda: NullKeyring())
-    production_agent = Agent(agent.path, helper=agent.helper)
-    with pytest.raises(AgentError, match="OS_KEYRING_UNAVAILABLE"):
-        production_agent.run("login")
+def test_session_uses_local_private_file_without_os_keyring(environment):
+    agent, _, store = environment
+    agent.run("login")
+    assert store.get() is not None
 
 
 def test_insecure_remote_issuer_rejected(tmp_path):
@@ -406,6 +403,7 @@ def test_provisioned_profile_forwards_through_real_mihomo(environment, tmp_path)
         ("Linux", "x86_64"): "x86_64-unknown-linux-gnu",
         ("Darwin", "x86_64"): "x86_64-apple-darwin",
         ("Darwin", "arm64"): "aarch64-apple-darwin",
+        ("Windows", "AMD64"): "x86_64-pc-windows-msvc.exe",
     }.get((platform.system(), platform.machine()))
     if host is None:
         pytest.skip("Real core smoke is unavailable for this host")
@@ -457,6 +455,17 @@ def test_provisioned_profile_forwards_through_real_mihomo(environment, tmp_path)
                     time.sleep(0.1)
             assert response.status_code == 200
             assert response.json()["issuer"] == provider.issuer
+            target = urlsplit(provider.base)
+            request = b"GET /application/o/workspace/.well-known/openid-configuration HTTP/1.0\r\nHost: localhost\r\n\r\n"
+            tunneled = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve().parents[1] / "workspace_agent.py"),
+                 "ssh-proxy", "--proxy-port", str(port), "--target-host", target.hostname,
+                 "--target-port", str(target.port)],
+                input=request, capture_output=True, timeout=15,
+            )
+            assert tunneled.returncode == 0, tunneled.stderr
+            assert b"200 OK" in tunneled.stdout.split(b"\r\n", 1)[0]
+            assert json.loads(tunneled.stdout.split(b"\r\n\r\n", 1)[1])["issuer"] == provider.issuer
         finally:
             process.terminate()
             process.wait(timeout=10)
@@ -492,7 +501,7 @@ def test_two_providers_keep_sessions_and_gateways_separate(tmp_path, monkeypatch
         assert agent.run("configure")["codex"]
         assert agent.run("token-feishu") == "smoke-model-credential"
         assert "MATCH,DIRECT" in agent.run("network-profile")["yaml"]
-        # A fresh CLI invocation must recover the selected provider from Keychain.
+        # A fresh CLI invocation must recover the selected provider from app state.
         agent = Agent(
             config, store=store, browser=authentik.browser, helper="/test/helper"
         )

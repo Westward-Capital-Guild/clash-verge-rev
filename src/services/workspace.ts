@@ -9,6 +9,7 @@ import type {
 
 export type {
   WorkspaceAction,
+  WorkspaceConfiguration,
   WorkspaceStatus,
   WorkspaceRemoteAction,
   WorkspaceRemoteStatus,
@@ -67,6 +68,13 @@ export function workspaceErrorMessage(failure: unknown): string {
     RESOURCE_NOT_READY: '个人网络配置尚未交付，请联系管理员。',
     RESOURCE_NOT_FOUND: '当前账号未获该资源授权，请刷新状态。',
     BINDING_CHANGED: '授权配置已更新，请刷新后重试。',
+    CATALOG_NOT_READY: '资源目录尚未初始化，请联系管理员完成配置导入。',
+    ARTIFACT_CHANGED: '管理员交付物已变化，请刷新资源后重试。',
+    INVALID_INSTALLATION: '本机安装身份无效，请重新登录。',
+    INSTALLATION_CONFLICT: '本机安装身份与当前账号不匹配，请重新登录。',
+    INVALID_REPORT: '本机状态报告格式无效，请更新客户端。',
+    REPORT_OUT_OF_ORDER: '本机状态报告已过期，正在重新建立安装身份。',
+    REPORT_CONFLICT: '本机状态报告发生冲突，请刷新资源后重试。',
     WORKSPACE_UNAVAILABLE: '公司接入服务暂时不可用，请稍后重试。',
     OS_KEYRING_UNAVAILABLE: '系统凭据库暂不可用，请在本机确认访问权限后重试。',
     SIGN_IN_CANCELLED: '已取消登录，可以重新尝试。',

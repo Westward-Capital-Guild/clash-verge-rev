@@ -16,6 +16,9 @@ if os.environ.get("PILGRIM_WORKSPACE_BOOTSTRAP_URL"):
     except AccessError as error:
         raise SystemExit(str(error)) from None
 target = os.environ.get("CARGO_BUILD_TARGET") or os.environ.get("TAURI_ENV_TARGET_TRIPLE", "")
+universal = target == "universal-apple-darwin"
+if universal and platform.system() != "Darwin":
+    raise SystemExit("Universal companion packaging requires macOS and a Universal2 Python environment.")
 machine = platform.machine()
 if target and (("x86_64" in target and machine not in ("x86_64", "AMD64")) or
                ("aarch64" in target and machine not in ("arm64", "aarch64"))):
@@ -28,6 +31,7 @@ subprocess.run([
     "--name", "pilgrim-workspace-agent", "--paths", str(ROOT / "companion"),
     "--collect-submodules", "keyring.backends", "--copy-metadata", "keyring",
     "--copy-metadata", "authlib", "--collect-data", "certifi",
+    *(["--target-arch", "universal2"] if universal else []),
     "--distpath", str(cache / "dist"), "--workpath", str(cache / "build"),
     "--specpath", str(cache), str(ROOT / "companion/workspace_agent.py"),
 ], check=True)

@@ -5,6 +5,7 @@ The native Tauri transport, OS keyring and OS proxy are NOT exercised here.
 
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import socket
@@ -17,6 +18,7 @@ import urllib.request
 import sys
 
 from playwright.sync_api import sync_playwright
+import tomlkit
 from test_smoke import MemoryStore, Provider
 from workspace_agent import Agent
 
@@ -164,10 +166,17 @@ def main():
                     errors = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
                     page.goto(url)
+                    navigation = page.get_by_role("navigation", name="Smoke 页面")
+                    resources = page.get_by_role("navigation", name="工作资源")
+                    configure = page.get_by_role("button", name=re.compile(r"^(重新)?写入 Codex 配置$"))
                     page.get_by_role("button", name="企业 SSO 登录", exact=True).click()
                     page.get_by_role("heading", name="Smoke User").wait_for()
-                    page.get_by_role("button", name="配置本机模型").click()
-                    page.get_by_text("本机模型已配置", exact=True).wait_for()
+                    page.get_by_role("heading", name="公司网络 · ClashVerge / mihomo", exact=True).wait_for()
+                    assert configure.count() == 0
+                    resources.get_by_role("button", name="Codex 本地配置").click()
+                    assert page.get_by_role("heading", name="公司网络 · ClashVerge / mihomo", exact=True).count() == 0
+                    configure.click()
+                    page.get_by_text("受管 profile / helper 已写入", exact=True).wait_for()
                     page.screenshot(
                         path=str(screenshot_dir / "workbench-desktop.png"),
                         full_page=True,
@@ -186,7 +195,8 @@ def main():
                         "Array.from(document.querySelectorAll('button')).every(e => parseFloat(getComputedStyle(e).fontSize) >= 14 && e.getBoundingClientRect().height >= 44)"
                     )
                     provider.fail_policy = True
-                    page.get_by_role("button", name="配置本机模型").click()
+                    resources.get_by_role("button", name="Codex 本地配置").click()
+                    configure.click()
                     page.get_by_role("alert").wait_for()
                     page.get_by_role("button", name="退出登录并断开").click()
                     page.get_by_role(
@@ -197,8 +207,9 @@ def main():
                     page.get_by_role("button", name="飞书登录", exact=True).click()
                     page.get_by_role("heading", name="Smoke User").wait_for()
                     assert agent.store.get()["provider"] == "feishu"
-                    page.get_by_role("button", name="配置本机模型").click()
-                    page.get_by_text("本机模型已配置", exact=True).wait_for()
+                    resources.get_by_role("button", name="Codex 本地配置").click()
+                    configure.click()
+                    page.get_by_text("受管 profile / helper 已写入", exact=True).wait_for()
                     page.get_by_role("button", name="退出登录并断开").click()
                     page.get_by_role("button", name="飞书登录", exact=True).wait_for()
                     assert agent.store.get() is None
@@ -219,7 +230,8 @@ def main():
                     agent.store.value["token"]["expires_at"] = 1
                     page.get_by_role("button", name="检查状态", exact=True).click()
                     page.get_by_text("登录已过期", exact=False).wait_for()
-                    assert page.get_by_role("button", name="配置本机模型").is_disabled()
+                    resources.get_by_role("button", name="Codex 本地配置").click()
+                    assert configure.is_disabled()
                     page.screenshot(
                         path=str(screenshot_dir / "session-expired.png"), full_page=True
                     )
@@ -237,12 +249,15 @@ def main():
                         def check(self, record, workspace_id):
                             return {"state": "ssh_ready", "alias": "pilgrim-synthetic", "path": "/workspace/synthetic"}
                     agent.remote_ssh = SyntheticSSH()
+                    navigation.get_by_role("button", name="开发环境", exact=True).click()
                     page.get_by_role("button", name="刷新开发机").click()
                     page.get_by_role("heading", name="Synthetic development host").wait_for()
                     page.get_by_role("button", name="检查连接").click()
                     page.get_by_text("尚未添加 Codex Desktop 项目", exact=False).wait_for()
                     page.get_by_text("在 Codex Desktop 设置", exact=False).wait_for()
                     page.screenshot(path=str(screenshot_dir / "remote-synthetic.png"), full_page=True)
+                    assert page.get_by_role("navigation", name="工作资源").count() == 0
+                    navigation.get_by_role("button", name="工作台", exact=True).click()
                     page.get_by_role("button", name="退出登录并断开").click()
                     page.get_by_role("button", name="飞书登录", exact=True).wait_for()
                     assert page.get_by_role("heading", name="Synthetic development host").count() == 0
@@ -264,23 +279,40 @@ def main():
                         try:
                             page.get_by_role("button", name="检查状态", exact=True).click()
                             page.get_by_role("heading", name="Fixture A", exact=True).wait_for()
+                            assert page.get_by_role("heading", name="Synthetic host", exact=True).count() == 0
+                            resources.get_by_role("button", name="Codex 本地配置").click()
+                            codex_config = agent.codex_path()
+                            codex_config.parent.mkdir(parents=True, exist_ok=True)
+                            codex_config.write_text('model_provider = "existing"\n[model_providers.existing]\nname = "Existing provider"\nbase_url = "https://existing.example.invalid/v1"\nwire_api = "responses"\n')
+                            before = tomlkit.parse(codex_config.read_text())
+                            configure.click()
+                            page.get_by_text("受管 profile / helper 已写入", exact=True).wait_for()
+                            after = tomlkit.parse(codex_config.read_text())
+                            assert after["model_provider"] == before["model_provider"]
+                            assert after["model_providers"] == before["model_providers"]
+                            assert after["profiles"]["pilgrim_workspace"]["model_provider"] == "existing"
+                            page.screenshot(path=str(screenshot_dir / "company-codex-provider-preserved.png"), full_page=True)
+                            navigation.get_by_role("button", name="开发环境", exact=True).click()
                             page.get_by_role("heading", name="Synthetic host", exact=True).wait_for()
-                            assert page.get_by_role("button", name="配置本机模型", exact=True).count() == 0
                             page.get_by_role("button", name="准备 SSH", exact=True).click()
                             page.get_by_text("SSH 配置已准备，尚未验证连接。", exact=True).wait_for()
                             assert "PRIVATE KEY" not in page.locator("body").inner_text()
                             page.screenshot(path=str(screenshot_dir / "company-managed-key-synthetic.png"), full_page=True)
                             fixture["network"] = "not_granted"
+                            navigation.get_by_role("button", name="工作台", exact=True).click()
                             page.get_by_role("button", name="检查状态", exact=True).click()
                             page.get_by_role("button", name="连接公司网络", exact=True).wait_for()
                             page.wait_for_function("document.querySelectorAll('button').length > 0 && Array.from(document.querySelectorAll('button')).some(b => b.textContent === '连接公司网络' && b.disabled)")
-                            assert page.get_by_role("heading", name="Synthetic host", exact=True).count() == 1
+                            navigation.get_by_role("button", name="开发环境", exact=True).click()
+                            page.get_by_role("heading", name="Synthetic host", exact=True).wait_for()
+                            navigation.get_by_role("button", name="工作台", exact=True).click()
                             fixture["error"] = 403, "MEMBER_NOT_REGISTERED"
                             page.get_by_role("button", name="检查状态", exact=True).click()
                             page.get_by_text("已登录 Workspace，个人工作资源尚未分配。", exact=True).wait_for()
-                            page.get_by_role("button", name="刷新开发机", exact=True).click()
+                            navigation.get_by_role("button", name="开发环境", exact=True).click()
                             page.get_by_text("尚未分配个人开发机，不影响 Workspace 登录或已分配的公司网络。", exact=True).wait_for()
-                            assert page.get_by_role("heading", name="Fixture A", exact=True).count() == 1
+                            navigation.get_by_role("button", name="工作台", exact=True).click()
+                            page.get_by_role("heading", name="Fixture A", exact=True).wait_for()
                             assert page.get_by_role("button", name="退出登录并断开", exact=True).is_enabled()
                             assert "错误码：MEMBER_NOT_REGISTERED" not in page.locator("body").inner_text()
                             page.screenshot(path=str(screenshot_dir / "company-unassigned-signed-in.png"), full_page=True)
@@ -299,7 +331,8 @@ def main():
                             "result": "passed",
                             "flows": [
                                 "Authentik and Feishu OIDC login",
-                                "Codex configuration",
+                                "resource selection and workbench/development navigation",
+                                "Codex configuration and company provider preservation",
                                 "policy failure",
                                 "login cancellation",
                                 "expired session",
@@ -311,7 +344,7 @@ def main():
                             "screenshots": str(screenshot_dir),
                             "excluded": [
                                 "native IPC",
-                                "OS keyring",
+                                "native credential store",
                                 "OS proxy",
                                 "real Authentik tenant",
                             ],

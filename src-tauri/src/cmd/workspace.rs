@@ -54,6 +54,20 @@ pub struct WorkspaceStatus {
     capabilities: Option<WorkspaceCapabilities>,
     #[serde(default)]
     network_stage: Option<String>,
+    #[serde(default)]
+    configurations: Vec<WorkspaceConfiguration>,
+    #[serde(default)]
+    installation_id: Option<String>,
+    #[serde(default)]
+    installation_reports: Vec<WorkspaceReport>,
+    #[serde(default)]
+    catalogue_code: Option<String>,
+    #[serde(default)]
+    installation_code: Option<String>,
+    #[serde(default)]
+    system_proxy_closed: Option<bool>,
+    #[serde(default)]
+    system_proxy_error: Option<String>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, specta::Type)]
@@ -61,6 +75,40 @@ pub struct WorkspaceCapabilities {
     network: String,
     development_hosts: String,
     local_model: String,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, specta::Type)]
+pub struct WorkspaceConfiguration {
+    id: String,
+    kind: String,
+    revision: String,
+    preparation: String,
+    #[serde(default)]
+    observation: Option<WorkspaceObservation>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, specta::Type)]
+pub struct WorkspaceObservation {
+    principal_id: String,
+    configuration_id: String,
+    revision: String,
+    status: String,
+    #[serde(default)]
+    reason: Option<String>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, specta::Type)]
+pub struct WorkspaceReport {
+    configuration_id: String,
+    revision: String,
+    sequence: u64,
+    stage: String,
+    #[serde(default)]
+    error_code: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    received_at: Option<String>,
 }
 
 fn failure(code: &str) -> CommandFailure {
@@ -110,6 +158,8 @@ async fn companion_args(args: &[&str]) -> CmdResult<serde_json::Value> {
     }
     #[cfg(unix)]
     command.process_group(0);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW preserves the companion's pipes.
     let remote = args.first().is_some_and(|name| name.starts_with("remote-"));
     if remote {
         let proxy = super::get_sys_proxy().await?;
@@ -149,6 +199,13 @@ async fn companion_args(args: &[&str]) -> CmdResult<serde_json::Value> {
             "INVALID_REQUEST",
             "UNSUPPORTED_VERSION",
             "RESOURCE_NOT_READY",
+            "CATALOG_NOT_READY",
+            "ARTIFACT_CHANGED",
+            "INVALID_INSTALLATION",
+            "INSTALLATION_CONFLICT",
+            "INVALID_REPORT",
+            "REPORT_OUT_OF_ORDER",
+            "REPORT_CONFLICT",
             "WORKSPACE_UNAVAILABLE",
             "PROFILE_TOO_LARGE",
             "INVALID_PROFILE",
@@ -166,6 +223,10 @@ async fn companion_args(args: &[&str]) -> CmdResult<serde_json::Value> {
             "SIGN_IN_TIMED_OUT",
             "OS_KEYRING_UNAVAILABLE",
             "LOCAL_MODEL_NOT_GRANTED",
+            "CODEX_CONFIG_INVALID",
+            "CODEX_CONFIG_CONFLICT",
+            "CODEX_PROVIDER_REQUIRED",
+            "INVALID_DELIVERY_STATE",
         ];
         let code = output
             .stderr
@@ -188,6 +249,29 @@ async fn companion_args(args: &[&str]) -> CmdResult<serde_json::Value> {
 }
 
 static NETWORK_STAGE: parking_lot::Mutex<&str> = parking_lot::Mutex::new("disconnected");
+static NETWORK_CONFIGURATION: parking_lot::Mutex<Option<(String, String)>> = parking_lot::Mutex::new(None);
+
+async fn report_network_stage(value: &serde_json::Value, stage: &str, error_code: Option<&str>) {
+    let Some(configuration_id) = value.get("configuration_id").and_then(serde_json::Value::as_str) else {
+        return;
+    };
+    let Some(revision) = value.get("revision").and_then(serde_json::Value::as_str) else {
+        return;
+    };
+    let mut args = vec![
+        "report",
+        "--configuration-id",
+        configuration_id,
+        "--revision",
+        revision,
+        "--stage",
+        stage,
+    ];
+    if let Some(error_code) = error_code {
+        args.extend(["--error-code", error_code]);
+    }
+    let _ = companion_args(&args).await;
+}
 
 async fn set_network(enabled: bool) -> CmdResult {
     super::patch_verge_config(IVerge {
@@ -221,16 +305,33 @@ impl Drop for TemporaryProfile {
 
 async fn connect() -> CmdResult {
     *NETWORK_STAGE.lock() = "downloading";
+    *NETWORK_CONFIGURATION.lock() = None;
     let result = connect_inner().await;
-    if result.is_err() {
-        let mut stage = NETWORK_STAGE.lock();
-        *stage = match *stage {
-            "downloading" => "download_failed",
-            "downloaded" => "validation_failed",
-            "validated" => "import_failed",
-            "imported" => "activation_failed",
-            _ => "proxy_enable_failed",
-        };
+    if let Err(error) = &result {
+        {
+            let mut stage = NETWORK_STAGE.lock();
+            *stage = match *stage {
+                "downloading" => "download_failed",
+                "downloaded" => "validation_failed",
+                "validated" => "import_failed",
+                "imported" => "activation_failed",
+                _ => "proxy_enable_failed",
+            };
+        }
+        let configuration = { NETWORK_CONFIGURATION.lock().clone() };
+        if let Some((configuration_id, revision)) = configuration {
+            let code = match error.code.as_deref() {
+                Some("WORKSPACE_CANCELLED") => "cancelled",
+                Some("WORKSPACE_INVALID_PROFILE") | Some("WORKSPACE_VALIDATION_FAILED") => "invalid_configuration",
+                _ => "connection_failed",
+            };
+            report_network_stage(
+                &serde_json::json!({"configuration_id": configuration_id, "revision": revision}),
+                "failed",
+                Some(code),
+            )
+            .await;
+        }
     }
     result
 }
@@ -240,6 +341,12 @@ async fn connect_inner() -> CmdResult {
     use std::io::Write as _;
     const MARKER: &str = "pilgrim-workspace-managed-v2:";
     let value = companion("network-profile").await?;
+    if let (Some(configuration_id), Some(revision)) = (
+        value.get("configuration_id").and_then(serde_json::Value::as_str),
+        value.get("revision").and_then(serde_json::Value::as_str),
+    ) {
+        *NETWORK_CONFIGURATION.lock() = Some((configuration_id.to_owned(), revision.to_owned()));
+    }
     let yaml = value
         .get("yaml")
         .and_then(serde_json::Value::as_str)
@@ -295,6 +402,8 @@ async fn connect_inner() -> CmdResult {
         .stderr(std::process::Stdio::piped());
     #[cfg(unix)]
     validation.process_group(0);
+    #[cfg(target_os = "windows")]
+    validation.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     let child = validation.spawn().map_err(|_| failure("WORKSPACE_VALIDATION_FAILED"))?;
     #[cfg(unix)]
     let mut group = CompanionGroup(child.id().unwrap_or(0));
@@ -352,6 +461,7 @@ async fn connect_inner() -> CmdResult {
         return Err(failure("WORKSPACE_ACTIVATION_FAILED"));
     }
     *NETWORK_STAGE.lock() = "profile_selected";
+    report_network_stage(&value, "applied", None).await;
     if let Err(error) = set_network(true).await {
         // A failed update keeps the previously working selection available.
         if previous.is_some() {
@@ -360,6 +470,7 @@ async fn connect_inner() -> CmdResult {
         return Err(error);
     }
     *NETWORK_STAGE.lock() = "system_proxy_enabled_reachability_unverified";
+    report_network_stage(&value, "verified", None).await;
     Ok(())
 }
 
@@ -406,8 +517,19 @@ pub async fn workspace_action(action: WorkspaceAction) -> CmdResult<WorkspaceSta
         WorkspaceAction::Logout => {
             let disconnect = set_network(false).await;
             let logout = companion("logout").await;
-            disconnect?;
-            logout?
+            let logout = logout?;
+            let mut logout = logout;
+            match disconnect {
+                Ok(()) => {
+                    logout["system_proxy_closed"] = serde_json::Value::Bool(true);
+                }
+                Err(error) => {
+                    logout["system_proxy_closed"] = serde_json::Value::Bool(false);
+                    logout["system_proxy_error"] =
+                        serde_json::Value::String(error.code.unwrap_or_else(|| "SYSPROXY_CLOSE_FAILED".to_owned()));
+                }
+            }
+            logout
         }
     };
     let mut status: WorkspaceStatus =

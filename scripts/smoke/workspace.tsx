@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { WorkspaceView } from '../../src/components/workspace/workspace-view'
@@ -37,6 +37,29 @@ const client: WorkspaceClient = {
   },
 }
 
-createRoot(document.getElementById('root')!).render(
-  <WorkspaceView client={client} />,
-)
+export const SmokeWorkspace = () => {
+  const [page, setPage] = useState<'workbench' | 'development'>('workbench')
+  return (
+    <>
+      <nav
+        aria-label="Smoke 页面"
+        style={{ display: 'flex', gap: 16, padding: 16 }}
+      >
+        {(['workbench', 'development'] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={page === value}
+            style={{ minHeight: 44, fontSize: 14 }}
+            onClick={() => setPage(value)}
+          >
+            {value === 'workbench' ? '工作台' : '开发环境'}
+          </button>
+        ))}
+      </nav>
+      <WorkspaceView key={page} client={client} page={page} />
+    </>
+  )
+}
+
+createRoot(document.getElementById('root')!).render(<SmokeWorkspace />)

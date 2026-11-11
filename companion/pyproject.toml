@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Per-user OIDC and development environment companion"
 requires-python = ">=3.11"
 license = "GPL-3.0-only"
-dependencies = ["Authlib>=1.6,<2", "requests>=2.32,<3", "keyring>=25,<26", "tomlkit>=0.13,<1", "filelock>=3.16,<4", "cryptography>=46,<51"]
+dependencies = ["Authlib>=1.6,<2", "requests>=2.32,<3", "tomlkit>=0.13,<1", "filelock>=3.16,<4", "cryptography>=46,<51"]
 
 [project.optional-dependencies]
 bundle = ["pyinstaller>=6.16,<7"]

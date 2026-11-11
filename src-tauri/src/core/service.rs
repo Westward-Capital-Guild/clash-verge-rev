@@ -1878,7 +1878,7 @@ impl ServiceManager {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(target_os = "windows", test))]
     pub async fn confirm_ready(&self) -> Result<()> {
         require_privileged_service()?;
         RUN_STATE.probe().await.map(|_| ())

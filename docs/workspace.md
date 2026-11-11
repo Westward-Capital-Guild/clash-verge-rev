@@ -12,7 +12,9 @@ bootstrap v1, displays Feishu only, and consumes policy v2. Service URLs and OID
 endpoints must share the bootstrap origin; redirects and employee JSON fallback
 are rejected. Network and development-host grants are independent. The initial
 API has no local model credential endpoint, and company mode never calls the
-legacy credential action or writes a Codex provider/profile.
+legacy credential action. Company builds may write an app-owned profile and
+helper record after an existing Codex provider has been found; the provider
+table, address, name and routing remain untouched.
 
 The source contains only generic protocol examples and synthetic fixtures. Supply
 company build input outside this checkout; do not use a `VITE_` variable or commit
@@ -50,8 +52,8 @@ browser's executable to override it. It drives the actual workbench through
 the actual companion using a local signed OIDC fixture with PKCE. Credentials are
 held in a test-only memory store and `CODEX_HOME` points to a temporary directory.
 It covers login, configuration, denial, logout and a 390px layout. The Linux
-x86_64 and macOS core smoke starts the prepared real mihomo on an ephemeral loopback
-port and verifies an HTTP request through it; it never changes the host proxy,
+x86_64, Windows x64 and macOS core smoke starts the prepared real mihomo on an ephemeral loopback
+port and verifies HTTP and the companion's SSH SOCKS transport through it; it never changes the host proxy,
 TUN or DNS. It skips explicitly if the core has not been downloaded.
 
 For the native Linux window smoke, build with `cargo build -p clash-verge --bin
@@ -69,9 +71,11 @@ NVIDIA EGL initialization crashes Xvfb, prefix the command with
 `env __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json LIBGL_ALWAYS_SOFTWARE=1`
 when that Mesa vendor file exists.
 
-These tests do not establish live Authentik/Feishu, OS keyring, native login,
-system proxy/TUN or installed-package acceptance. Test scripts are outside the production
-Vite root and the production companion CLI has no plaintext credential-store mode.
+These tests do not establish live Authentik/Feishu, native login, system
+proxy/TUN or installed-package acceptance. Test scripts are outside the
+production Vite root. The companion keeps its OIDC session in an app-owned
+`credentials.json` file with a `0700` parent directory and `0600` file mode;
+it does not use an OS keychain or show a keychain prompt.
 
 ## Desktop companion
 
@@ -82,6 +86,31 @@ runtime under the ignored `src-tauri/resources/companion/` directory. Tauri incl
 it as resources, and Rust resolves its executable from the app resource directory.
 Employees do not install Python, install a companion separately or set environment
 variables. Sign/notarize the complete bundle through the company release process.
+
+Windows SSH preparation validates NTFS ownership and ACLs instead of Unix mode
+bits. Managed keys inherit a private directory ACL before their content is written.
+Company-proxy SSH connections use the bundled companion's SOCKS transport on all
+platforms, so employees do not need a separate netcat installation.
+
+For Apple Universal, prepare a Python 3.11+ Universal2 environment with the locked
+bundle dependencies. Every native extension must contain both ARM64 and x86_64;
+an ARM-only wheel is insufficient. Dependencies without a Universal2 wheel must
+be built from the locked source version with compatible dual-architecture native
+libraries. Then run from that environment:
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin --toolchain 1.99.0
+CI=true APPLE_SIGNING_IDENTITY=- python scripts/build-macos-universal.py
+```
+
+Supply the trusted company bootstrap as build environment input as described
+above. The script packages the Universal2 helper, combines both architectures of
+mihomo and service resources, builds the app and DMG, and checks every bundled
+Mach-O plus the complete bundle signature. It deliberately avoids a subsequent
+`uv sync` that could replace Universal2 extensions with thin wheels. The `-`
+identity provides ad-hoc signing for local smoke only; distributed releases need
+the company Developer ID and notarization. Rosetta enables execution of the Intel
+slice on an Apple Silicon test machine, but does not replace physical Intel testing.
 
 For local development only, `PILGRIM_WORKSPACE_AGENT` may select an absolute
 executable, and `PILGRIM_WORKSPACE_CONFIG` may select legacy fixture JSON. A company
@@ -118,13 +147,16 @@ Developer fixture JSON (all domains below are placeholders; not employee instruc
 
 Keep the file in a user-owned private directory outside this checkout. Do not
 place secrets in it. Use HTTPS; plain HTTP is accepted only for literal loopback
-hosts used by smoke fixtures. A configuration change selects a different keyring
-account so a previous deployment's tokens are not reused.
+hosts used by smoke fixtures. A configuration change selects a different app-state
+path so a previous deployment's tokens are not reused.
 
-The production store uses macOS Keychain, Windows Credential Manager or Linux
-Secret Service/libsecret. An unavailable or unsupported backend fails closed;
-there is no plaintext fallback. A headless Linux session needs a working,
-unlocked session keyring before real sign-in can be tested.
+The companion stores the selected provider session in its private app-state
+directory as `credentials.json`. The containing directory is mode `0700`, the
+session file is mode `0600`, writes are atomic and serialized with a lock, and
+symlink or ownership/permission mismatches fail closed. The file is deliberately
+independent of macOS Keychain, Linux Secret Service and Windows Credential
+Manager, so desktop sign-in and token refresh do not trigger OS credential
+prompts. Logout removes only the session file; delivery state remains separate.
 
 ## Authentik and Feishu
 
@@ -154,7 +186,7 @@ Feishu requests `openid profile`; the company Feishu provider does not currently
 tokens. Expiry requires signing out and back in. Authentik requests
 `openid profile offline_access` and retains refresh support. The desktop permits
 one active provider at a time: sign out before switching. Session provider identity
-persists in the OS keyring. The Codex helper command is bound to that provider;
+persists in the app-owned session file. The Codex helper command is bound to that provider;
 after switching, synchronize Codex again before use. A stale configuration
 cannot fetch the new provider's credential for the previous provider's model URL. Accounts are never merged by display name or email.
 Gateway validators must accept the matching issuer/client and enforce their own
@@ -201,18 +233,21 @@ browser's IdP SSO cookie is not cleared. The next login may reuse that SSO sessi
 
 ## Codex configuration
 
-Synchronization adds only `model_providers.pilgrim` to the user's `config.toml`,
-preserving other settings, profiles and comments. It does not create a profile
-file. A conflicting provider is rejected. The first previous file is saved as
-`config.before-workspace.toml`; writes are atomic and companion updates serialize.
-The default model/provider is not changed. Select the company provider and a
-model approved by the deployment policy, for example:
+Company synchronization writes only the app-owned
+`profiles.pilgrim_workspace` entry in `config.toml` and a
+`$CODEX_HOME/pilgrim-workspace.toml` helper record after reading the existing
+`model_provider` reference. It refuses to create a provider when no Codex
+`config.toml` exists, and refuses to overwrite a conflicting managed profile.
+The existing provider table, address, name, model routing and default selection
+remain unchanged. The first previous files are saved as
+`config.before-workspace.toml` and `pilgrim-workspace.before-workspace.toml`;
+writes are atomic and serialized.
+Legacy Authentik fixtures continue to use the existing provider-backed path;
+that path may add `model_providers.pilgrim` to a fixture-owned config. Company
+Passport delivery never changes an existing provider definition or selects a
+model.
 
-```sh
-codex -c 'model_provider="pilgrim"' --model <approved-model>
-```
-
-The provider uses a command-backed bearer-token helper. The deployed Codex must
+The legacy provider path uses a command-backed bearer-token helper. The deployed Codex must
 support `[model_providers.<id>.auth]` with `command`, `args`, `timeout_ms` and
 `refresh_interval_ms`; see the [official configuration documentation](https://developers.openai.com/codex/config-advanced/).
 An older unsupported Codex must be upgraded before using this configuration.

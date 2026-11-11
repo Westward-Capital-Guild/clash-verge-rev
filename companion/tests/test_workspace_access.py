@@ -1,15 +1,18 @@
 """Passport contract regressions with synthetic keys and isolated local state."""
 
 import json
+import os
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import pytest
 
-from remote_ssh import RemoteSSH, key_fingerprint
+from remote_ssh import RemoteSSH, check_permissions, key_fingerprint
 from test_smoke import MemoryStore
 from workspace_access import AccessError, WorkspaceAccess
 from workspace_agent import Agent, AgentError
@@ -72,6 +75,8 @@ def service(tmp_path, monkeypatch):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if self.headers.get("Authorization") != "Bearer synthetic-a":
                 self.reply({"error": {"code": "INVALID_SESSION"}}, 401)
+            elif self.path == "/workspace/configurations/network/delivery":
+                self.reply(fixture["delivery"])
             elif body != {"version": 1, "revision": fixture["revision"]}:
                 self.reply({"error": {"code": "BINDING_CHANGED"}}, 409)
             else:
@@ -131,13 +136,26 @@ def test_managed_key_installed_privately_idempotently_and_not_returned(service):
     first = agent.remote("prepare", "host-a", "project")
     assert first["state"] == "ssh_prepared", first
     key = agent.remote_ssh.managed / (first["alias"] + ".key")
-    assert key.stat().st_mode & 0o777 == 0o600
+    check_permissions(key)
     assert key.read_text() == fixture["private"]
     assert "PRIVATE KEY" not in json.dumps(first)
     assert agent.remote("prepare", "host-a", "project") == first
     key.write_text("unrelated local key")
     assert agent.remote("prepare", "host-a", "project")["state"] == "config_conflict"
     assert key.read_text() == "unrelated local key"
+
+
+def test_managed_key_rejects_broadened_permissions(service):
+    fixture, agent = service
+    first = agent.remote("prepare", "host-a", "project")
+    assert first["state"] == "ssh_prepared", first
+    key = agent.remote_ssh.managed / (first["alias"] + ".key")
+    if os.name == "nt":
+        subprocess.run(["icacls", str(key), "/grant", "*S-1-1-0:R"], check=True, capture_output=True)
+    else:
+        key.chmod(0o644)
+    assert agent.remote("prepare", "host-a", "project")["state"] == "config_conflict"
+    assert key.read_text() == fixture["private"]
 
 
 def test_binding_revision_key_and_member_isolation(service):
@@ -203,6 +221,24 @@ def test_registered_key_never_requests_private_key(service):
     assert not any("credential" in call for call in fixture["calls"])
 
 
+def test_hosts_accepts_source_full_openssh_host_key_line(service):
+    fixture, agent = service
+    fixture["host"]["connection"]["host_keys"] = [{
+        "algorithm": "ssh-ed25519",
+        "public_key": "ssh-ed25519 AAAA-source-host-key comment",
+    }]
+    agent.access.load()
+    records = agent.access.hosts("synthetic-a", {
+        "binding_id": "member-a",
+        "revision": fixture["revision"],
+        "capabilities": {"development_hosts": "granted"},
+        "development_hosts": {"endpoint": agent.access.bootstrap["development_hosts_endpoint"]},
+    })
+    assert records[0]["connection"]["host_keys"] == [
+        "ssh-ed25519 AAAA-source-host-key comment"
+    ]
+
+
 def test_redirect_and_oversized_profile_are_rejected(service):
     fixture, agent = service
     fixture["redirect"] = True
@@ -212,3 +248,81 @@ def test_redirect_and_oversized_profile_are_rejected(service):
     fixture["profile"] = "x" * 2_000_001
     with pytest.raises(AccessError, match="PROFILE_TOO_LARGE"):
         agent.run("network-profile")
+
+
+def test_json_delivery_preserves_yaml_size_limit(service):
+    fixture, agent = service
+    agent.access.load()
+    agent.access.bootstrap["configurations_endpoint"] = agent.access.origin[0] + "://127.0.0.1:" + str(agent.access.origin[2]) + "/workspace/configurations"
+    configuration = {"id": "network", "revision": "r1", "kind": "mihomo", "binding_id": "member-a"}
+    fixture["delivery"] = {"version": 1, **configuration, "configuration": {"yaml": "#" + "\t" * 1_999_999}}
+    assert agent.access.delivery("synthetic-a", configuration)["configuration"] == fixture["delivery"]["configuration"]
+    fixture["delivery"]["configuration"]["yaml"] += "x"
+    with pytest.raises(AccessError, match="INVALID_PROFILE"):
+        agent.access.delivery("synthetic-a", configuration)
+
+
+def test_people_policy_accepts_granted_local_model_and_requires_credential_endpoint(monkeypatch):
+    access = WorkspaceAccess("https://passport.example/workspace/bootstrap")
+    access.bootstrap = {
+        "policy_endpoint": "https://passport.example/workspace/policy",
+        "credential_endpoint": "https://passport.example/workspace/credential",
+        "network_profile_endpoint": "https://passport.example/workspace/network-profile",
+        "development_hosts_endpoint": "https://passport.example/workspace/development-hosts",
+    }
+    monkeypatch.setattr(access, "request", lambda *_args, **_kwargs: {
+        "version": 2,
+        "binding_id": "member-a",
+        "revision": "r1",
+        "capabilities": {"network": "not_granted", "development_hosts": "not_granted", "local_model": "granted"},
+        "local_model": {"base_url": "https://models.example/v1"},
+    })
+    assert access.policy("token")["capabilities"]["local_model"] == "granted"
+
+    access.bootstrap.pop("credential_endpoint")
+    with pytest.raises(AccessError, match="INVALID_POLICY"):
+        access.policy("token")
+
+
+def test_people_credential_uses_name_and_returns_url_key(monkeypatch):
+    access = WorkspaceAccess("https://passport.example/workspace/bootstrap")
+    access.bootstrap = {"credential_endpoint": "https://passport.example/workspace/credential"}
+    calls = []
+
+    def request(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {"url": "https://models.example/v1", "key": "member-key"}
+
+    monkeypatch.setattr(access, "request", request)
+    assert access.model_credential("token")["url"] == "https://models.example/v1"
+    assert calls[0][1]["body"] == {"name": "codex"}
+
+
+def test_people_agent_token_returns_key_without_persisting_secret(tmp_path):
+    store = MemoryStore()
+    store.set({
+        "provider": "feishu",
+        "identity": {"sub": "member-a"},
+        "client": ["https://passport.example", "workspace-desktop"],
+        "token": {"access_token": "token", "expires_at": time.time() + 300},
+    })
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({
+        "version": 1,
+        "issuer": "https://passport.example",
+        "client_id": "workspace-desktop",
+        "policy_endpoint": "https://passport.example/workspace/policy",
+        "credential_endpoint": "https://passport.example/workspace/credential",
+    }))
+    agent = Agent(config, store=store)
+    agent.providers = {"feishu": {"issuer": "https://passport.example", "client_id": "workspace-desktop"}}
+    agent.access = SimpleNamespace(
+        bootstrap={"credential_endpoint": "https://passport.example/workspace/credential"},
+        policy=lambda _token: {
+            "capabilities": {"local_model": "granted"},
+            "local_model": {"base_url": "https://models.example/v1"},
+        },
+        model_credential=lambda _token, *, name: {"url": "https://models.example/v1", "key": "member-key"},
+    )
+    assert agent.run("token-feishu") == "member-key"
+    assert "member-key" not in json.dumps(store.value)

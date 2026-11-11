@@ -2,6 +2,7 @@
 
 import copy
 import getpass
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -26,7 +27,7 @@ def remote(tmp_path):
         "connection": {"hostname": "127.0.0.1", "port": 2222, "username": getpass.getuser(),
                        "transport": "ssh", "host_keys": [server.with_suffix(".pub").read_text()]},
         "user_key_fingerprints": [key_fingerprint(identity.with_suffix(".pub").read_text())],
-        "workspaces": [{"id": "project", "display_name": "Fixture project", "path": str(tmp_path)}],
+        "workspaces": [{"id": "project", "display_name": "Fixture project", "path": "/workspace/project"}],
     }
     return RemoteSSH(tmp_path / "home"), record, identity, server
 
@@ -90,8 +91,10 @@ def test_remote_authority_refetched_and_failure_is_not_unassigned(remote, tmp_pa
     assert Agent(tmp_path / "unconfigured.json").remote("hosts")["state"] == "unconfigured"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Loopback target requires POSIX sshd and a POSIX shell")
 def test_real_loopback_ssh_checks_user_directory_and_codex(remote, tmp_path):
     manager, record, identity, server = remote
+    record["workspaces"][0]["path"] = str(tmp_path)
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
