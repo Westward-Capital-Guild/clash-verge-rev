@@ -29,7 +29,6 @@ cache.mkdir(parents=True, exist_ok=True)
 subprocess.run([
     sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir",
     "--name", "pilgrim-workspace-agent", "--paths", str(ROOT / "companion"),
-    "--collect-submodules", "keyring.backends", "--copy-metadata", "keyring",
     "--copy-metadata", "authlib", "--collect-data", "certifi",
     *(["--target-arch", "universal2"] if universal else []),
     "--distpath", str(cache / "dist"), "--workpath", str(cache / "build"),
