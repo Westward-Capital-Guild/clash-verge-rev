@@ -112,7 +112,7 @@ export const WorkspaceRemote = ({
     async (hostId: string, workspaceId: string) => {
       const selected = await save({
         title: '导出 SSH 私钥',
-        defaultPath: `pilgrim-${hostId}.key`,
+        defaultPath: `pilgrim-${hostId.replace(/[^a-zA-Z0-9_.-]/g, '_')}.key`,
         filters: [{ name: 'SSH private key', extensions: ['key', 'pem'] }],
       })
       if (!selected) return
