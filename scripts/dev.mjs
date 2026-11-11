@@ -8,13 +8,6 @@ import {
   requestDevQuit,
   waitForPortClosed,
 } from './dev-control.mjs'
-import {
-  developmentServiceDirectoryEnvironment,
-  developmentServiceWatchPaths,
-  ensureDevelopmentService,
-  prepareDevelopmentService,
-} from './dev-service.mjs'
-
 const FORCE_GRACE_MS = 2_000
 const SHUTDOWN_TIMEOUT_MS = 10_000
 const FORCE_POLL_MS = 50
@@ -26,14 +19,11 @@ export function buildTauriInvocation(
   platform = process.platform,
 ) {
   const env = { ...environment, RUST_BACKTRACE: 'full' }
-  const features = mode === 'sidecar' ? 'verge-dev,dev-sidecar' : 'verge-dev'
+  const features = 'verge-dev,dev-sidecar'
   const args = ['exec', 'tauri', 'dev', '-f', features]
   if (mode === 'trace') {
     env.RUSTFLAGS = '--cfg tokio_unstable'
     args.push('tokio-trace')
-  }
-  for (const path of developmentServiceWatchPaths) {
-    args.push('--additional-watch-folders', path)
   }
   return {
     command: 'pnpm',
@@ -323,7 +313,7 @@ export async function runDevCommand(mode, dependencies = {}) {
     }
     recordPath = join(
       environment.HOME,
-      'Library/Application Support/io.github.clash-verge-rev.clash-verge-rev.dev/singleton-instance.json',
+      'Library/Application Support/com.pilgrimss.workspace.dev/singleton-instance.json',
     )
     const installSigint = dependencies.installSigint ?? defaultInstallSigint
     removeSigint = installSigint(() => dispatchSigint()) ?? (() => {})
@@ -531,30 +521,20 @@ export async function runDevCommand(mode, dependencies = {}) {
   )
 }
 
-export async function prepareDevRuntime(mode, dependencies = {}) {
-  const ensureService = dependencies.ensureService ?? ensureDevelopmentService
-  const prepareService =
-    dependencies.prepareService ?? prepareDevelopmentService
-  let serviceDirectory
+export async function prepareDevRuntime(mode) {
   if (mode === 'service') {
-    serviceDirectory = await ensureService()
-  } else if (mode === 'dev' || mode === 'trace' || mode === 'sidecar') {
-    serviceDirectory = await prepareService()
+    throw new Error(
+      'WORKSPACE_SERVICE_DISABLED: Pilgrim Workspace uses sidecar mode; privileged service operations are disabled.',
+    )
   }
-  return {
-    mode: mode === 'service' ? 'dev' : mode,
-    serviceDirectory,
-  }
+  return { mode }
 }
 
 async function run() {
   if (process.argv[2] === '--anchor') {
     await runDevAnchor(process.argv[3])
   } else {
-    const { mode, serviceDirectory } = await prepareDevRuntime(process.argv[2])
-    if (serviceDirectory) {
-      process.env[developmentServiceDirectoryEnvironment] = serviceDirectory
-    }
+    const { mode } = await prepareDevRuntime(process.argv[2])
     await runDevCommand(mode)
   }
 }

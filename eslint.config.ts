@@ -128,6 +128,7 @@ export default defineConfig([
           allowDefaultProject: [
             'eslint.config.ts',
             `vite.config.mts`,
+            'scripts/smoke/vite.config.mts',
             'scripts/*.mjs',
             'tests/*.ts',
             'src/polyfills/*.js',

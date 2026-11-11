@@ -1,3 +1,5 @@
+> **Unofficial Pilgrim Workspace fork.** Company workbench and OIDC smoke candidate maintained by Westward Capital Guild. See [UPSTREAM.md](UPSTREAM.md) and [local smoke instructions](docs/workspace.md). Not an official Clash Verge Rev release.
+
 <h1 align="center">
   <img src="./src-tauri/icons/icon.png" alt="Clash" width="128" />
   <br>

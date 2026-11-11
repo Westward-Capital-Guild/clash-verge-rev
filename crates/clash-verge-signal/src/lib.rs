@@ -1,14 +1,9 @@
-//! Linux-only termination signal bridge.
+//! Termination signal bridge for Linux and macOS.
 //!
-//! Upstream Tauri delivers session-end and termination events to the app on
-//! Windows and macOS, but has no equivalent on Linux: a desktop session may
-//! end without any window or run event reaching the process. Linux builds
-//! keep this crate to listen for SIGTERM, SIGINT and SIGHUP and forward them
-//! to the app quit flow, so system proxy and TUN cleanup still runs before
-//! the process dies. Non-Linux builds compile this crate to nothing and must
-//! not depend on it.
+//! Shell termination signals must enter the app quit flow before the process
+//! exits so its sidecar and system proxy are cleaned up.
 
-#![cfg(target_os = "linux")]
+#![cfg(any(target_os = "linux", target_os = "macos"))]
 
 use std::sync::{
     OnceLock,
@@ -46,7 +41,7 @@ impl ShutdownLatch {
     }
 }
 
-/// Spawns the Linux signal loop on a dedicated runtime so it survives the
+/// Spawns the Unix signal loop on a dedicated runtime so it survives the
 /// teardown of any app-owned runtime. The handler runs once per accepted
 /// signal; the quit flow it invokes owns the exit-or-cancel decision.
 pub fn register<F, Fut>(f: F)

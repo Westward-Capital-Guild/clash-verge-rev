@@ -176,6 +176,13 @@ pub fn run() -> std::process::ExitCode {
         StartupAction::ExitFailure => return std::process::ExitCode::FAILURE,
     }
 
+    // Check before Tauri setup can start a core or reconcile the shared system proxy.
+    #[cfg(target_os = "macos")]
+    if let Err(error) = AsyncHandler::block_on(utils::startup::check_network_exclusivity()) {
+        utils::startup::report_network_conflict(&error);
+        return std::process::ExitCode::FAILURE;
+    }
+
     #[cfg(target_os = "linux")]
     utils::linux::workarounds::apply_nvidia_dmabuf_renderer_workaround();
     #[cfg(target_os = "linux")]
@@ -230,7 +237,7 @@ pub fn run() -> std::process::ExitCode {
             if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 resolve::resolve_setup_async();
                 resolve::resolve_setup_sync();
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
                 resolve::init_signal();
             })) {
                 log_setup_panic("window-core", panic);
@@ -271,7 +278,7 @@ pub fn run() -> std::process::ExitCode {
 
             #[cfg(target_os = "macos")]
             if let Some(window) = _app_handle.get_webview_window("main") {
-                let _ = window.set_title("Clash Verge");
+                let _ = window.set_title("Pilgrim Workspace");
             }
         }
 
