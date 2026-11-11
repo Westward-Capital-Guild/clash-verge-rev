@@ -20,6 +20,8 @@
 
 - Support managed SSH permissions on Windows and ship both Apple architectures in the Universal desktop bundle.
 
+- Clear the workspace-owned macOS proxy when proxy restoration fails during exit.
+
 ## v2.5.9
 
 <details>
